@@ -4,6 +4,9 @@
 // enforced by the row-level security policies in supabase/schema*.sql.
 const SUPABASE_URL = 'https://yycmgicikxvdwvthswiv.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_geSIYOPYXbVW98u5DdPTvA_pw_Uf1yt';
+// The link in a password-recovery email lands here with "type=recovery" in the address.
+// It has to be read before the Supabase client consumes and clears it.
+const openedFromRecoveryLink = window.location.hash.includes('type=recovery');
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Records are stored exactly as the Mac app encodes them, so both read the same rows:
@@ -26,7 +29,7 @@ const PAGES = [['calendar', 'Calendario'], ['projects', 'Proyectos'], ['items', 
 
 const state = {
   session: null, memberships: [], membership: null,
-  authMode: 'signIn', awaitingCode: false, authEmail: '', authError: '', busy: false,
+  authMode: 'signIn', awaitingCode: false, recovering: false, authEmail: '', authError: '', authInfo: '', busy: false,
   page: 'calendar', calendarMode: 'projects', anchor: startOfDay(new Date()), selectedDay: null,
   items: [], technicians: [], projects: [], settings: null,
   search: '', categoryFilter: '', statusFilter: '', notice: '',
@@ -73,6 +76,7 @@ function message(error) {
   if (text.includes('invalid login credentials')) return 'Correo o contraseña incorrectos.';
   if (text.includes('email not confirmed')) return 'Falta confirmar el correo con el código que te enviamos.';
   if (text.includes('expired') || (text.includes('invalid') && text.includes('token'))) return 'El código no es válido o ha caducado. Pide uno nuevo.';
+  if (text.includes('different from the old')) return 'La contraseña nueva tiene que ser distinta de la anterior.';
   if (text.includes('rate limit') || text.includes('security purposes')) return 'Demasiados intentos seguidos. Espera un minuto y vuelve a probar.';
   if (text.includes('row-level security') || text.includes('permission denied')) return 'Tu nivel de permisos no permite este cambio.';
   if (text.includes('duplicate key')) return 'Ese correo ya estaba invitado.';
@@ -175,13 +179,16 @@ function categories() {
 // ---------- rendering
 
 function render() {
-  app.innerHTML = state.session && state.membership ? dashboardHTML() : authHTML();
+  app.innerHTML = state.session && state.membership && !state.recovering ? dashboardHTML() : authHTML();
   app.querySelectorAll('[data-color]').forEach((el) => { el.style.background = el.dataset.color; });
 }
 
 function authHTML() {
   const register = state.authMode !== 'signIn';
-  const body = state.awaitingCode ? `
+  const body = state.recovering ? `
+    <p class="muted">Elige una contraseña nueva para tu cuenta.</p>
+    <label class="field">Contraseña nueva (mínimo 8 caracteres)<input class="input" name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+    <button class="btn primary" ${state.busy ? 'disabled' : ''}>Guardar contraseña</button>` : state.awaitingCode ? `
     <p class="muted">Te hemos enviado un código de 6 cifras a ${esc(state.authEmail)}. Escríbelo para confirmar tu cuenta.</p>
     <label class="field">Código<input class="input mono" name="code" inputmode="numeric" autocomplete="one-time-code" required></label>
     <div class="dlg-foot">
@@ -197,12 +204,14 @@ function authHTML() {
     <label class="field">Correo<input class="input" name="email" type="email" autocomplete="username" required value="${esc(state.authEmail)}"></label>
     <label class="field">Contraseña${register ? ' (mínimo 8 caracteres)' : ''}<input class="input" name="password" type="password" autocomplete="${register ? 'new-password' : 'current-password'}" minlength="${register ? 8 : 1}" required></label>
     ${state.authMode === 'technician' ? '<p class="muted">Tu empresa tiene que haberte invitado antes con este mismo correo.</p>' : ''}
-    <button class="btn primary" ${state.busy ? 'disabled' : ''}>${register ? 'Crear cuenta' : 'Entrar'}</button>`;
+    <button class="btn primary" ${state.busy ? 'disabled' : ''}>${register ? 'Crear cuenta' : 'Entrar'}</button>
+    ${register ? '' : '<button type="button" class="link" data-action="auth-recover">Recuperar contraseña</button>'}`;
 
   return `<div class="auth"><form class="box form" data-form="auth">
     <div><h1>OSKI</h1><p class="lead">Acceso de empresas y técnicos</p></div>
     ${body}
     ${state.authError ? `<p class="error" role="alert">${esc(state.authError)}</p>` : ''}
+    ${state.authInfo ? `<p class="muted" role="status">${esc(state.authInfo)}</p>` : ''}
   </form></div>`;
 }
 
@@ -469,9 +478,14 @@ function inviteDialog() {
 
 const forms = {
   async auth(values) {
-    state.busy = true; state.authError = ''; render();
+    state.busy = true; state.authError = ''; state.authInfo = ''; render();
     try {
-      if (state.awaitingCode) {
+      if (state.recovering) {
+        const { error } = await db.auth.updateUser({ password: values.password });
+        if (error) throw error;
+        state.recovering = false;
+        await enter();
+      } else if (state.awaitingCode) {
         const { data, error } = await db.auth.verifyOtp({ email: state.authEmail, token: values.code.trim(), type: 'signup' });
         if (error) throw error;
         state.session = data.session; state.awaitingCode = false;
@@ -565,8 +579,20 @@ document.addEventListener('submit', (event) => {
 // ---------- actions
 
 const actions = {
-  'auth-mode': (el) => { state.authMode = el.dataset.mode; state.authError = ''; render(); },
+  'auth-mode': (el) => { state.authMode = el.dataset.mode; state.authError = ''; state.authInfo = ''; render(); },
   'auth-back': () => { state.awaitingCode = false; state.authError = ''; render(); },
+  'auth-recover': async () => {
+    const email = app.querySelector('input[name="email"]').value.trim();
+    state.authEmail = email; state.authError = ''; state.authInfo = '';
+    if (!email) {
+      state.authError = 'Escribe tu correo y vuelve a pulsar «Recuperar contraseña».';
+    } else {
+      const { error } = await db.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + window.location.pathname });
+      if (error) state.authError = message(error);
+      else state.authInfo = `Te hemos enviado un correo a ${email} con un enlace para elegir una contraseña nueva.`;
+    }
+    render();
+  },
   'auth-resend': async () => {
     const { error } = await db.auth.resend({ type: 'signup', email: state.authEmail });
     state.authError = error ? message(error) : 'Te hemos enviado un código nuevo.';
@@ -652,6 +678,14 @@ document.addEventListener('keydown', (event) => {
   const { data } = await db.auth.getSession();
   if (data.session) {
     state.session = data.session;
-    await enter();
+    if (openedFromRecoveryLink) {
+      state.recovering = true;
+      render();
+    } else {
+      await enter();
+    }
+  } else if (openedFromRecoveryLink) {
+    state.authError = 'El enlace para cambiar la contraseña no es válido o ha caducado. Pide uno nuevo.';
+    render();
   }
 })();
