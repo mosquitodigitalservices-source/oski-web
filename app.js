@@ -77,6 +77,7 @@ function message(error) {
   if (text.includes('email not confirmed')) return 'Falta confirmar el correo con el código que te enviamos.';
   if (text.includes('expired') || (text.includes('invalid') && text.includes('token'))) return 'El código no es válido o ha caducado. Pide uno nuevo.';
   if (text.includes('different from the old')) return 'La contraseña nueva tiene que ser distinta de la anterior.';
+  if (text.includes('error sending')) return 'El servidor no pudo enviar el correo. Hay que revisar la configuración de correo (SMTP) en Supabase.';
   if (text.includes('rate limit') || text.includes('security purposes')) return 'Demasiados intentos seguidos. Espera un minuto y vuelve a probar.';
   if (text.includes('row-level security') || text.includes('permission denied')) return 'Tu nivel de permisos no permite este cambio.';
   if (text.includes('duplicate key')) return 'Ese correo ya estaba invitado.';

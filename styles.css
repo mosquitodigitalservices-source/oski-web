@@ -46,7 +46,7 @@ main{max-width:1280px;margin:0 auto;padding:32px 32px 80px}
 .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 .seg button:not([aria-pressed="true"]):hover{background:var(--accent-soft)}
 
-.input{width:100%;padding:9px 12px;border-radius:var(--ctl);border:1px solid var(--line-2);background:var(--panel-2)}
+.input{width:100%;font-size:16px;padding:9px 12px;border-radius:var(--ctl);border:1px solid var(--line-2);background:var(--panel-2)}
 .input::placeholder{color:var(--faint)}
 .input:focus{outline:none;border-color:var(--accent)}
 label.field{display:flex;flex-direction:column;gap:4px;font-size:13px;font-weight:500;color:var(--muted)}
