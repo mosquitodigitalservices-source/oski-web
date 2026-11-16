@@ -163,8 +163,15 @@ async function enter() {
     await loadData();
     state.authError = '';
   } catch (error) {
-    state.authError = message(error);
-    state.notice = state.authError;
+    if (String(error && error.message).includes('foreign key')) {
+      // The browser still holds a session for an account that was deleted on the server.
+      await db.auth.signOut({ scope: 'local' });
+      state.session = null;
+      state.authError = 'Esa cuenta ya no existe en el servidor. Regístrate de nuevo.';
+    } else {
+      state.authError = message(error);
+      state.notice = state.authError;
+    }
   }
   render();
 }
