@@ -133,6 +133,15 @@ async function saveRecord(collection, record) {
   if (error) throw error;
 }
 
+async function saveRecords(collection, records) {
+  if (!records.length) return;
+  const { error } = await db.from('company_records').upsert(
+    records.map((record) => ({ company_id: state.membership.company_id, collection, id: record.id, data: record })),
+    { onConflict: 'company_id,collection,id' },
+  );
+  if (error) throw error;
+}
+
 async function deleteRecords(collection, ids) {
   if (!ids.length) return;
   const { error } = await db.from('company_records').delete()
@@ -176,7 +185,62 @@ async function enter() {
   render();
 }
 
+// ---------- calendar files
+
+function icsText(value) {
+  return value.replace(/\\n/gi, '\n').replace(/\\([,;\\])/g, '$1').trim();
+}
+
+function icsDate(value) {
+  const m = value.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?/);
+  if (!m) return null;
+  const [year, month, day, hour, minute, second] = m.slice(1, 7).map((part) => Number(part || 0));
+  return m[7] ? new Date(Date.UTC(year, month - 1, day, hour, minute, second)) : new Date(year, month - 1, day, hour, minute, second);
+}
+
+/** Reads the events of an iCalendar (.ics) file. Repeating events count once, on their first date. */
+function parseICS(text) {
+  const lines = text.replace(/\r\n?/g, '\n').replace(/\n[ \t]/g, '').split('\n');
+  const events = [];
+  let event = null;
+  let nested = 0;
+
+  for (const line of lines) {
+    if (line === 'BEGIN:VEVENT') { event = {}; nested = 0; continue; }
+    if (!event) continue;
+    if (line === 'END:VEVENT') {
+      if (event.start) events.push(event);
+      event = null;
+    } else if (line.startsWith('BEGIN:')) {
+      nested += 1;
+    } else if (line.startsWith('END:')) {
+      nested -= 1;
+    } else if (!nested) {
+      const colon = line.indexOf(':');
+      const name = line.slice(0, colon).split(';')[0];
+      const value = line.slice(colon + 1);
+      if (name === 'SUMMARY') event.title = icsText(value);
+      else if (name === 'DESCRIPTION') event.description = icsText(value);
+      else if (name === 'DTSTART') { event.start = icsDate(value); event.allDay = /^\d{8}$/.test(value); }
+      else if (name === 'DTEND') event.end = icsDate(value);
+    }
+  }
+
+  return events.map((e) => {
+    const start = startOfDay(e.start);
+    let end = e.end ? startOfDay(e.end) : start;
+    // An all-day event ends on the morning after its last day.
+    if (e.allDay && e.end) end = new Date(end.getFullYear(), end.getMonth(), end.getDate() - 1);
+    return { title: e.title || 'Sin título', description: (e.description || '').split('\n')[0].slice(0, 60), start, end: end < start ? start : end };
+  });
+}
+
 // ---------- categories
+
+function technicianCategories() {
+  const all = [...TECH_CATEGORIES, ...state.technicians.map((t) => t.category)];
+  return all.filter((name, index) => name && all.findIndex((other) => sameText(other, name)) === index);
+}
 
 function categories() {
   const settings = state.settings || {};
@@ -307,6 +371,7 @@ function calendarHTML() {
       <button type="button" data-action="calendar-mode" data-mode="projects" aria-pressed="${!inventory}">Equipo</button>
       <button type="button" data-action="calendar-mode" data-mode="inventory" aria-pressed="${inventory}">Inventario</button>
     </div>
+    ${inventory ? '' : '<button type="button" class="btn" data-action="calendar-import">Importar</button>'}
   </div>
   <div class="cols">
     <section class="box">
@@ -428,15 +493,32 @@ function select(label, name, options, selected) {
     return `<option value="${esc(value)}" ${sameText(value, selected) ? 'selected' : ''}>${esc(text)}</option>`;
   }).join('')}</select></label>`;
 }
+const NEW_OPTION = '__new__';
+
+/** A select whose last line lets the person type a value that is not in the list. */
+function selectWithNew(label, name, options, selected) {
+  return `${select(label, name, [...options, [NEW_OPTION, '+ Nueva categoría…']], selected).replace('<select ', '<select data-new ')}
+    <label class="field" hidden>Nombre de la categoría nueva<input class="input" name="${name}New"></label>`;
+}
+
+/** The value of a selectWithNew field: the chosen option or the typed name ('' when left empty). */
+function chosenOrNew(values, name) {
+  return values[name] === NEW_OPTION ? values[`${name}New`].trim() : values[name];
+}
+
+function assignableNames(current) {
+  const names = canManage() ? state.technicians.map((t) => t.name) : [state.membership.display_name];
+  return !current || names.some((n) => sameText(n, current)) ? names : [current, ...names];
+}
+
 function dates(start, end) {
   return `<div class="pair">${field('Inicio', 'start', toInput(start), 'type="date" required')}${field('Fin', 'end', toInput(end), 'type="date" required')}</div>`;
 }
 
 function projectDialog(project) {
   const day = state.selectedDay || startOfDay(new Date());
-  const names = canManage() ? state.technicians.map((t) => t.name) : [state.membership.display_name];
-  const current = project ? project.employeeName : names[0];
-  const options = names.some((n) => sameText(n, current)) || !current ? names : [current, ...names];
+  const options = assignableNames(project && project.employeeName);
+  const current = project ? project.employeeName : options[0];
   openModal(project ? 'Editar proyecto' : 'Nuevo proyecto', 'project',
     select('Técnico', 'employee', options, current)
     + field('Proyecto', 'name', project ? project.projectName : '', 'required')
@@ -458,19 +540,29 @@ function reserveDialog(item) {
 function itemDialog() {
   openModal('Nuevo ítem', 'item',
     field('Nombre', 'name', '', 'required')
-    + select('Categoría', 'category', categories(), 'Accesories')
-    + field('O crea una categoría nueva', 'newCategory'),
+    + selectWithNew('Categoría', 'category', categories(), 'Accesories'),
     { submit: 'Añadir' });
 }
 
 function techDialog(tech) {
   openModal(tech ? 'Editar técnico' : 'Nuevo técnico', 'tech',
     field('Nombre', 'name', tech ? tech.name : '', 'required')
-    + select('Categoría', 'category', TECH_CATEGORIES, tech ? tech.category : 'DIT')
+    + selectWithNew('Categoría', 'category', technicianCategories(), tech ? tech.category : 'DIT')
     + select('Estado', 'availability', ['Libre', 'Ocupado'], tech ? tech.availability : 'Libre')
     + field('Teléfono', 'phone', tech ? tech.phone : '', 'type="tel"')
     + field('Email', 'email', tech ? tech.email : '', 'type="email"'),
     { id: tech ? tech.id : '', remove: tech ? 'tech-delete' : null, submit: tech ? 'Guardar' : 'Añadir' });
+}
+
+function importDialog() {
+  const options = assignableNames(null);
+  if (!options.length) { state.notice = 'Añade antes un técnico al que asignar los eventos.'; render(); return; }
+  openModal('Importar calendario', 'calendarImport',
+    `<p class="muted">Elige un archivo de calendario (.ics). En Google Calendar: Ajustes, «Importar y exportar», Exportar. En el Calendario de Mac (iCloud): Archivo, Exportar.</p>
+    <label class="field">Archivo .ics<input class="input" type="file" name="file" accept=".ics,text/calendar" required></label>`
+    + select('Asignar los eventos a', 'employee', options, options[0])
+    + '<p class="muted">Se importan los eventos de 12 meses atrás a 12 meses adelante. Los que ya estén se omiten.</p>',
+    { submit: 'Importar' });
 }
 
 function inviteDialog() {
@@ -537,11 +629,13 @@ const forms = {
     return change(() => saveRecord('items', record));
   },
 
-  item(values) {
-    const created = values.newCategory.trim();
-    const category = created ? (categories().find((c) => sameText(c, created)) || created) : values.category;
+  item(values, id, form) {
+    const typed = chosenOrNew(values, 'category');
+    if (!typed) return showFormError(form, 'Escribe el nombre de la categoría nueva.');
+    const category = categories().find((c) => sameText(c, typed)) || typed;
+    const created = category === typed && !categories().some((c) => sameText(c, typed)) ? typed : '';
     return change(async () => {
-      if (created && !categories().some((c) => sameText(c, created))) {
+      if (created) {
         const settings = state.settings || { id: SETTINGS_ID, customCategories: [], categoryOrder: [], categoryColors: {} };
         await saveRecord('settings', {
           ...settings,
@@ -553,13 +647,50 @@ const forms = {
     });
   },
 
-  tech(values, id) {
+  tech(values, id, form) {
+    const typed = chosenOrNew(values, 'category');
+    if (!typed) return showFormError(form, 'Escribe el nombre de la categoría nueva.');
+    const category = technicianCategories().find((c) => sameText(c, typed)) || typed;
     const existing = state.technicians.find((t) => t.id === id);
     return change(() => saveRecord('technicians', {
-      id: id || newID(), name: values.name.trim(), availability: values.availability, category: values.category,
+      id: id || newID(), name: values.name.trim(), availability: values.availability, category,
       color: existing ? existing.color : TECH_COLORS[state.technicians.length % TECH_COLORS.length],
       phone: values.phone.trim(), email: values.email.trim(),
     }));
+  },
+
+  async calendarImport(values, id, form) {
+    let events;
+    try {
+      events = parseICS(await values.file.text());
+    } catch (error) {
+      return showFormError(form, 'No se pudo leer el archivo.');
+    }
+    if (!events.length) return showFormError(form, 'El archivo no contiene eventos de calendario.');
+
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth() - 12, now.getDate());
+    const to = new Date(now.getFullYear(), now.getMonth() + 12, now.getDate());
+    const key = (title, start, end) => `${title.trim().toLowerCase()}|${Math.round(start)}|${Math.round(end)}`;
+    const known = new Set(state.projects.filter((p) => sameText(p.employeeName, values.employee))
+      .map((p) => key(p.projectName, toSwift(startOfDay(fromSwift(p.date))), toSwift(startOfDay(fromSwift(p.endDate))))));
+    const inRange = events.filter((e) => e.end >= from && e.start <= to);
+    const records = [];
+
+    for (const e of inRange) {
+      const k = key(e.title, toSwift(e.start), toSwift(e.end));
+      if (known.has(k)) continue;
+      known.add(k);
+      records.push({ id: newID(), projectName: e.title, productionCompany: e.description, employeeName: values.employee, date: toSwift(e.start), endDate: toSwift(e.end) });
+    }
+
+    await change(() => saveRecords('projects', records));
+    if (!state.notice) {
+      state.notice = records.length
+        ? `Importados ${records.length} de ${inRange.length} eventos para ${values.employee}.`
+        : `Ningún evento nuevo: los ${inRange.length} del periodo ya estaban importados o el archivo no tiene eventos en ese periodo.`;
+      render();
+    }
   },
 
   async invite(values, id, form) {
@@ -568,14 +699,19 @@ const forms = {
       display_name: values.name.trim(), access_level: values.level,
     });
     if (error) {
-      const box = form.querySelector('.error'); box.textContent = message(error); box.hidden = false;
-      return;
+      return showFormError(form, message(error));
     }
     closeModal();
     state.notice = `Invitación guardada para ${values.email.trim()}. Dile que se registre en OSKI con ese correo.`;
     render();
   },
 };
+
+function showFormError(form, text) {
+  const box = form.querySelector('.error');
+  box.textContent = text;
+  box.hidden = false;
+}
 
 document.addEventListener('submit', (event) => {
   const form = event.target.closest('[data-form]');
@@ -643,6 +779,7 @@ const actions = {
   'tech-edit': (el) => techDialog(state.technicians.find((t) => t.id === el.dataset.id)),
   'tech-delete': (el) => change(() => deleteRecords('technicians', [el.dataset.id])),
   invite: inviteDialog,
+  'calendar-import': importDialog,
 };
 
 document.addEventListener('click', (event) => {
@@ -658,6 +795,10 @@ document.addEventListener('change', async (event) => {
     localStorage.setItem('oski.company', el.value);
     state.page = 'calendar';
     await change(async () => {});
+  } else if ('new' in el.dataset) {
+    const extra = el.closest('label').nextElementSibling;
+    extra.hidden = el.value !== NEW_OPTION;
+    if (!extra.hidden) extra.querySelector('input').focus();
   } else if (el.dataset.input && el.tagName === 'SELECT') {
     state[el.dataset.input] = el.value;
     render();
