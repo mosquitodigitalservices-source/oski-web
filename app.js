@@ -25,13 +25,13 @@ const LEVELS = {
   collaborator: ['Colaborador', 'Ve el calendario del equipo y reserva material.'],
   manager: ['Encargado', 'Edita proyectos, inventario y técnicos.'],
 };
-const PAGES = [['calendar', 'Calendario'], ['projects', 'Proyectos'], ['items', 'Ítems'], ['team', 'Técnicos']];
+const PAGES = [['calendar', 'Calendario'], ['projects', 'Proyectos'], ['items', 'Ítems'], ['team', 'Técnicos'], ['invoices', 'Facturas'], ['payrolls', 'Nóminas']];
 
 const state = {
   session: null, memberships: [], membership: null,
   authMode: 'signIn', awaitingCode: false, recovering: false, authEmail: '', authError: '', authInfo: '', busy: false,
   page: 'calendar', calendarMode: 'projects', anchor: startOfDay(new Date()), selectedDay: null,
-  items: [], technicians: [], projects: [], settings: null,
+  items: [], technicians: [], projects: [], settings: null, invoices: [], payrolls: [], profile: null, sheet: null,
   search: '', categoryFilter: '', statusFilter: '', notice: '',
 };
 
@@ -80,6 +80,7 @@ function message(error) {
   if (text.includes('error sending')) return 'El servidor no pudo enviar el correo. Hay que revisar la configuración de correo (SMTP) en Supabase.';
   if (text.includes('rate limit') || text.includes('security purposes')) return 'Demasiados intentos seguidos. Espera un minuto y vuelve a probar.';
   if (text.includes('row-level security') || text.includes('permission denied')) return 'Tu nivel de permisos no permite este cambio.';
+  if (text.includes('check constraint')) return 'Falta preparar la base de datos: ejecuta schema-documentos.sql en Supabase.';
   if (text.includes('duplicate key')) return 'Ese correo ya estaba invitado.';
   if (text.includes('failed to fetch') || text.includes('network')) return 'No hay conexión con el servidor. Comprueba internet y vuelve a probar.';
   return `No se pudo completar: ${(error && error.message) || error}`;
@@ -123,6 +124,9 @@ async function loadData() {
   state.technicians = of('technicians');
   state.projects = of('projects');
   state.settings = of('settings')[0] || null;
+  state.invoices = of('invoices');
+  state.payrolls = of('payrolls');
+  state.profile = of('profiles').find((p) => p.userId === state.session.user.id) || null;
 }
 
 async function saveRecord(collection, record) {
@@ -288,7 +292,7 @@ function authHTML() {
 }
 
 function dashboardHTML() {
-  const pages = PAGES.filter(([id]) => id !== 'team' || canViewTeam());
+  const pages = PAGES.filter(([id]) => (id !== 'team' || canViewTeam()) && (id !== 'invoices' || canManage()));
   const nav = pages.map(([id, label]) =>
     `<button type="button" data-action="page" data-page="${id}" ${state.page === id ? 'aria-current="page"' : ''}>${label}</button>`).join('');
   const m = state.membership;
@@ -296,7 +300,8 @@ function dashboardHTML() {
     ? `<select data-action="company" aria-label="Empresa">${state.memberships.map((x) =>
         `<option value="${x.company_id}" ${x === m ? 'selected' : ''}>${esc(x.company.name)}</option>`).join('')}</select>`
     : `<span>${esc(m.company.name)}</span>`;
-  const page = { calendar: calendarHTML, projects: projectsHTML, items: itemsHTML, team: teamHTML }[state.page]();
+  const page = state.sheet ? sheetHTML()
+    : { calendar: calendarHTML, projects: projectsHTML, items: itemsHTML, team: teamHTML, invoices: invoicesHTML, payrolls: payrollsHTML }[state.page]();
 
   return `<header class="top">
     <div class="brand">OSKI</div>
@@ -577,6 +582,10 @@ function inviteDialog() {
 // ---------- form handling
 
 const forms = {
+  profile: (...args) => profileForm(...args),
+  invoice: (...args) => invoiceForm(...args),
+  payroll: (...args) => payrollForm(...args),
+
   async auth(values) {
     state.busy = true; state.authError = ''; state.authInfo = ''; render();
     try {
@@ -747,7 +756,7 @@ const actions = {
     Object.assign(state, { session: null, membership: null, memberships: [], awaitingCode: false, authMode: 'signIn', notice: '' });
     render();
   },
-  page: (el) => { state.page = el.dataset.page; state.notice = ''; render(); window.scrollTo(0, 0); },
+  page: (el) => { state.page = el.dataset.page; state.sheet = null; state.notice = ''; render(); window.scrollTo(0, 0); },
   'calendar-mode': (el) => { state.calendarMode = el.dataset.mode; render(); },
   month: (el) => {
     const step = Number(el.dataset.step);
@@ -780,6 +789,28 @@ const actions = {
   'tech-delete': (el) => change(() => deleteRecords('technicians', [el.dataset.id])),
   invite: inviteDialog,
   'calendar-import': importDialog,
+  'profile-edit': (el) => profileDialog(el.dataset.kind),
+  'invoice-new': () => invoiceDialog(null),
+  'invoice-edit': (el) => invoiceDialog(state.invoices.find((i) => i.id === el.dataset.id)),
+  'invoice-delete': (el) => change(() => deleteRecords('invoices', [el.dataset.id])),
+  'payroll-new': () => payrollDialog(null),
+  'payroll-edit': (el) => payrollDialog(state.payrolls.find((p) => p.id === el.dataset.id)),
+  'payroll-delete': (el) => change(() => deleteRecords('payrolls', [el.dataset.id])),
+  'doc-open': (el) => { state.sheet = { type: el.dataset.type, id: el.dataset.id }; render(); window.scrollTo(0, 0); },
+  'doc-close': () => { state.sheet = null; render(); },
+  'doc-print': () => window.print(),
+  'row-add': (el) => {
+    const rows = el.parentElement.querySelector('[data-rows]');
+    const row = rows.lastElementChild.cloneNode(true);
+    row.querySelectorAll('input').forEach((input) => { input.value = ''; });
+    rows.appendChild(row);
+    row.querySelector('input').focus();
+  },
+  'row-remove': (el) => {
+    const row = el.closest('.line');
+    if (row.parentElement.children.length > 1) row.remove();
+    else row.querySelectorAll('input').forEach((input) => { input.value = ''; });
+  },
 };
 
 document.addEventListener('click', (event) => {
@@ -794,7 +825,10 @@ document.addEventListener('change', async (event) => {
     state.membership = state.memberships.find((m) => m.company_id === el.value);
     localStorage.setItem('oski.company', el.value);
     state.page = 'calendar';
+    state.sheet = null;
     await change(async () => {});
+  } else if ('project' in el.dataset) {
+    fillFromProject(el);
   } else if ('new' in el.dataset) {
     const extra = el.closest('label').nextElementSibling;
     extra.hidden = el.value !== NEW_OPTION;
