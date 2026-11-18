@@ -151,6 +151,9 @@ main{max-width:1280px;margin:0 auto;padding:32px 32px 80px}
 .pay-table td{padding:11px 8px;border:1px solid #1c2a4a;text-align:center;width:33.3%}
 .pay-foot{margin-top:6px;text-align:center;font-size:15px}
 
+.step{display:flex;flex-direction:column;gap:12px}
+.step-title{display:flex;flex-direction:column;margin:0;font-size:17px;font-weight:600}
+.step-title span{font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
 details.field summary{cursor:pointer;color:var(--text);padding:4px 0}
 details.field[open]{gap:10px}
 .style-preview{max-width:160px;max-height:80px;padding:6px;background:#fff;border-radius:6px}

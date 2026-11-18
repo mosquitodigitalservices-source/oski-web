@@ -135,29 +135,66 @@ function payrollStyle() { return { ...DEFAULT_PAYROLL_STYLE, ...(myProfile().pay
 
 function payrollDialog(payroll) {
   const p = myProfile();
-  if (!payroll && !p.name) { state.notice = 'Rellena antes «Mis datos»: nombre, DNI y cuenta para el cierre de nómina.'; render(); return; }
   const first = payrollTemplates()[0];
   const current = payroll || { projectId: '', production: '', shootDate: toSwift(startOfDay(new Date())), days: 1, schedule: first.schedule,
     dayRate: first.dayRate, extraRate: first.extraRate, irpf: first.irpf, extras: [{ day: 0, schedule: '', hours: 0 }] };
   const person = payroll ? payroll.person : p;
   const extras = current.extras.length ? current.extras : [{ day: 0, schedule: '', hours: 0 }];
   const templates = payrollTemplates();
+  const step = (n, title, body) => `<section class="step" data-step="${n}" ${n > 1 ? 'hidden' : ''}>
+    <p class="step-title"><span>Paso ${n} de 3</span>${title}</p>${body}</section>`;
   openModal(payroll ? 'Editar nómina' : 'Nueva nómina', 'payroll',
-    `<div class="line">${select('Plantilla', 'template', [['', 'Elegir plantilla…'], ...templates.map((t) => [t.id, t.name])], '').replace('<select ', '<select data-template ')}
-      <button type="button" class="link" data-action="template-save">Guardar como plantilla</button>
-      <button type="button" class="link danger" data-action="template-delete">Eliminar</button></div>`
-    + projectOptions(current.projectId)
-    + `<div class="pair">${field('Productora', 'production', current.production ?? '')}${field('Fecha de rodaje', 'shootDate', toInput(fromSwift(current.shootDate)), 'type="date" required')}</div>`
-    + `<div class="pair">${field('Jornadas', 'days', current.days, 'inputmode="decimal" required')}${field('Tipo de jornada', 'schedule', current.schedule || '11+1', 'placeholder="11+1"')}</div>`
-    + `<div class="pair">${field('Tarifa por jornada (€)', 'dayRate', current.dayRate || '', 'inputmode="decimal" required')}${field('Tarifa hora extra (€)', 'extraRate', current.extraRate || '', 'inputmode="decimal"')}</div>`
-    + field('Retención IRPF (%)', 'irpf', current.irpf || '', 'inputmode="decimal"')
-    + rowsField('Horas extra: día, horario y horas', extraLineHTML, extras)
-    + `<details class="field"><summary>Datos del técnico</summary>
-      <div class="pair">${field('Nombre', 'pName', person.name, 'required')}${field('Apellidos', 'pSurname', person.surname)}</div>
-      <div class="pair">${field('Cargo', 'pRole', person.role)}${field('DNI', 'pTaxId', person.taxId)}</div>
-      <div class="pair">${field('Email', 'pEmail', person.email, 'type="email"')}${field('Teléfono', 'pPhone', person.phone, 'type="tel"')}</div>
-      ${field('Nº de cuenta (IBAN)', 'pIban', person.iban)}</details>`,
+    step(1, 'Plantilla y tarifas',
+      `<div class="line">${select('Plantilla', 'template', [['', 'Elegir plantilla…'], ...templates.map((t) => [t.id, t.name])], '').replace('<select ', '<select data-template ')}
+        <button type="button" class="link" data-action="template-save">Guardar como plantilla</button>
+        <button type="button" class="link danger" data-action="template-delete">Eliminar</button></div>`
+      + `<div class="pair">${field('Tipo de jornada', 'schedule', current.schedule || '11+1', 'placeholder="11+1"')}${field('Retención IRPF (%)', 'irpf', current.irpf || '', 'inputmode="decimal"')}</div>`
+      + `<div class="pair">${field('Tarifa por jornada (€)', 'dayRate', current.dayRate || '', 'inputmode="decimal" required')}${field('Tarifa hora extra (€)', 'extraRate', current.extraRate || '', 'inputmode="decimal"')}</div>`)
+    + step(2, 'Proyecto',
+      projectOptions(current.projectId)
+      + `<div class="pair">${field('Productora', 'production', current.production ?? '')}${field('Fecha de rodaje', 'shootDate', toInput(fromSwift(current.shootDate)), 'type="date" required')}</div>`
+      + field('Jornadas', 'days', current.days, 'inputmode="decimal" required')
+      + rowsField('Días: horario y horas extra', extraLineHTML, extras))
+    + step(3, 'Datos del técnico',
+      '<p class="muted">Se guardan en tu perfil y se rellenan solos en las próximas nóminas.</p>'
+      + `<div class="pair">${field('Nombre', 'pName', person.name, 'required')}${field('Apellidos', 'pSurname', person.surname)}</div>`
+      + `<div class="pair">${field('Cargo', 'pRole', person.role)}${field('DNI', 'pTaxId', person.taxId)}</div>`
+      + `<div class="pair">${field('Email', 'pEmail', person.email, 'type="email"')}${field('Teléfono', 'pPhone', person.phone, 'type="tel"')}</div>`
+      + field('Nº de cuenta (IBAN)', 'pIban', person.iban)),
     { id: payroll ? payroll.id : '', remove: payroll ? 'payroll-delete' : null });
+  setupWizard(modal.querySelector('form'));
+}
+
+/** Shows one step at a time, with Atrás / Siguiente, and Guardar only on the last step. */
+function setupWizard(form) {
+  const foot = form.querySelector('.dlg-foot');
+  const submit = foot.querySelector('.btn.primary');
+  submit.insertAdjacentHTML('beforebegin',
+    '<button type="button" class="btn" data-action="wizard-back">Atrás</button><button type="button" class="btn primary" data-action="wizard-next">Siguiente</button>');
+  showWizardStep(form, 1);
+}
+
+function showWizardStep(form, number) {
+  const steps = [...form.querySelectorAll('.step')];
+  steps.forEach((step) => { step.hidden = Number(step.dataset.step) !== number; });
+  form.dataset.step = number;
+  const last = number === steps.length;
+  form.querySelector('[data-action="wizard-back"]').hidden = number === 1;
+  form.querySelector('[data-action="wizard-next"]').hidden = last;
+  form.querySelector('.dlg-foot > button:not([type])').hidden = !last;
+  form.querySelector('.error').hidden = true;
+  const first = form.querySelector(`.step[data-step="${number}"] input, .step[data-step="${number}"] select`);
+  if (first) first.focus();
+}
+
+function wizardMove(button, direction) {
+  const form = button.form;
+  const current = Number(form.dataset.step);
+  if (direction > 0) {
+    const invalid = [...form.querySelectorAll(`.step[data-step="${current}"] input`)].find((input) => !input.checkValidity());
+    if (invalid) { invalid.reportValidity(); return; }
+  }
+  showWizardStep(form, current + direction);
 }
 
 function applyPayrollTemplate(selectEl) {
@@ -323,16 +360,22 @@ function payrollForm(values, id, form) {
   const existing = state.payrolls.find((x) => x.id === id);
   const project = state.projects.find((x) => x.id === values.projectId);
   const text = (key) => String(values[key] || '').trim();
-  return change(() => saveRecord('payrolls', {
+  const person = { name: text('pName'), surname: text('pSurname'), role: text('pRole'), taxId: text('pTaxId'), email: text('pEmail'), phone: text('pPhone'), iban: text('pIban') };
+  return change(async () => {
+    await saveRecord('profiles', { ...myProfile(), ...person });
+    await savePayroll(person);
+  });
+
+  function savePayroll(person) { return saveRecord('payrolls', {
     id: id || newID(), userId: state.session.user.id,
     projectId: values.projectId, projectName: project ? project.projectName : (existing ? existing.projectName : ''),
     production: text('production'),
     shootDate: toSwift(fromInput(values.shootDate)),
-    person: { name: text('pName'), surname: text('pSurname'), role: text('pRole'), taxId: text('pTaxId'), email: text('pEmail'), phone: text('pPhone'), iban: text('pIban') },
+    person,
     days: parseAmount(values.days), schedule: text('schedule') || '11+1',
     dayRate: parseAmount(values.dayRate), extraRate: parseAmount(values.extraRate), irpf: parseAmount(values.irpf),
     extras,
-  }));
+  }); }
 }
 
 // ---------- printable sheets

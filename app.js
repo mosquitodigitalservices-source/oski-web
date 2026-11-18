@@ -803,6 +803,8 @@ const actions = {
   'payroll-delete': (el) => change(() => deleteRecords('payrolls', [el.dataset.id])),
   'doc-open': (el) => { state.sheet = { type: el.dataset.type, id: el.dataset.id }; render(); window.scrollTo(0, 0); },
   'payroll-style': payrollStyleDialog,
+  'wizard-next': (el) => wizardMove(el, 1),
+  'wizard-back': (el) => wizardMove(el, -1),
   'template-save': savePayrollTemplate,
   'template-delete': deletePayrollTemplate,
   'style-reset': () => change(() => saveRecord('profiles', { ...myProfile(), payrollStyle: {} })),
