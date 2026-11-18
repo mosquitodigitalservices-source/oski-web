@@ -257,6 +257,10 @@ function categories() {
 function render() {
   app.innerHTML = state.session && state.membership && !state.recovering ? dashboardHTML() : authHTML();
   app.querySelectorAll('[data-color]').forEach((el) => { el.style.background = el.dataset.color; });
+  app.querySelectorAll('[data-pay-head]').forEach((el) => {
+    el.style.setProperty('--pay-head', el.dataset.payHead);
+    el.style.setProperty('--pay-table', el.dataset.payTable);
+  });
 }
 
 function authHTML() {
@@ -585,6 +589,7 @@ const forms = {
   profile: (...args) => profileForm(...args),
   invoice: (...args) => invoiceForm(...args),
   payroll: (...args) => payrollForm(...args),
+  payrollStyle: (...args) => payrollStyleForm(...args),
 
   async auth(values) {
     state.busy = true; state.authError = ''; state.authInfo = ''; render();
@@ -797,6 +802,10 @@ const actions = {
   'payroll-edit': (el) => payrollDialog(state.payrolls.find((p) => p.id === el.dataset.id)),
   'payroll-delete': (el) => change(() => deleteRecords('payrolls', [el.dataset.id])),
   'doc-open': (el) => { state.sheet = { type: el.dataset.type, id: el.dataset.id }; render(); window.scrollTo(0, 0); },
+  'payroll-style': payrollStyleDialog,
+  'template-save': savePayrollTemplate,
+  'template-delete': deletePayrollTemplate,
+  'style-reset': () => change(() => saveRecord('profiles', { ...myProfile(), payrollStyle: {} })),
   'doc-close': () => { state.sheet = null; render(); },
   'doc-print': () => window.print(),
   'row-add': (el) => {
@@ -827,6 +836,8 @@ document.addEventListener('change', async (event) => {
     state.page = 'calendar';
     state.sheet = null;
     await change(async () => {});
+  } else if ('template' in el.dataset) {
+    applyPayrollTemplate(el);
   } else if ('project' in el.dataset) {
     fillFromProject(el);
   } else if ('new' in el.dataset) {

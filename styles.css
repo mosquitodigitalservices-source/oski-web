@@ -144,13 +144,20 @@ main{max-width:1280px;margin:0 auto;padding:32px 32px 80px}
 .inv-lines tfoot th{border:0;text-align:right;font-size:18px}
 .inv-lines tfoot td{background:#f4f4f4;font-size:18px;font-weight:700}
 .pay-head,.pay-table{margin-bottom:26px}
-.pay-head th{padding:8px;background:#a4c2f4;border:1px solid #1c2a4a;font-size:17px}
+.pay-head th{padding:8px;background:var(--pay-head,#a4c2f4);border:1px solid #1c2a4a;font-size:17px}
 .pay-head td{padding:6px 10px;border:1px solid #1c2a4a;vertical-align:top;font-size:11.5px;line-height:1.9}
 .pay-head tr:last-child td{width:50%}
-.pay-table th{padding:8px;background:#9fc5e8;border:1px solid #1c2a4a;font-size:12.5px}
+.pay-table th{padding:8px;background:var(--pay-table,#9fc5e8);border:1px solid #1c2a4a;font-size:12.5px}
 .pay-table td{padding:11px 8px;border:1px solid #1c2a4a;text-align:center;width:33.3%}
 .pay-foot{margin-top:6px;text-align:center;font-size:15px}
 
+details.field summary{cursor:pointer;color:var(--text);padding:4px 0}
+details.field[open]{gap:10px}
+.style-preview{max-width:160px;max-height:80px;padding:6px;background:#fff;border-radius:6px}
+.check{display:flex;align-items:center;gap:6px;font-weight:400}
+.input[type=color]{height:40px;padding:4px}
+.pay-signature{display:block;max-width:200px;max-height:90px;margin:0 auto 8px}
+.pay-logo{display:block;max-width:300px;max-height:320px;margin:26px auto 0}
 @media (max-width:700px){.sheet{padding:28px 18px 40px}.inv-meta{flex-direction:column;margin-top:30px}}
 @media print{
   @page{size:A4;margin:14mm}

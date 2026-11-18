@@ -52,7 +52,7 @@ function invoicesHTML() {
 function payrollsHTML() {
   const mine = (payroll) => payroll.userId === state.session.user.id;
   const rows = [...state.payrolls].sort((a, b) => b.shootDate - a.shootDate).map((payroll) => `<div class="row">
-    <div class="main"><b>${esc(payroll.projectName || 'Sin proyecto')}</b>
+    <div class="main"><b>${esc([payroll.projectName || 'Sin proyecto', payroll.production].filter(Boolean).join(' x '))}</b>
       <span>${esc([payroll.person.name, payroll.person.surname].filter(Boolean).join(' '))}${payroll.person.role ? ` · ${esc(payroll.person.role)}` : ''}</span></div>
     <span class="when">${longDate(payroll.shootDate)}</span>
     <span class="badge on">${money(payrollTotal(payroll), { decimals: false })} €</span>
@@ -63,6 +63,7 @@ function payrollsHTML() {
   return `<div class="page-title">
     <h1 class="eyebrow">Nóminas</h1>
     <button type="button" class="btn" data-action="profile-edit" data-kind="person">Mis datos</button>
+    <button type="button" class="btn" data-action="payroll-style">Diseño de la hoja</button>
     <button type="button" class="btn primary" data-action="payroll-new">+ Nueva nómina</button>
   </div>
   <section class="box">${rows ? `<div class="rows">${rows}</div>` : '<p class="empty">Todavía no hay cierres de nómina.</p>'}</section>`;
@@ -119,18 +120,137 @@ function invoiceDialog(invoice) {
     { id: invoice ? invoice.id : '', remove: invoice ? 'invoice-delete' : null });
 }
 
+const DEFAULT_PAYROLL_TEMPLATES = [
+  { id: 'ficcion', name: 'Ficción', schedule: '10+1', dayRate: 0, extraRate: 0, irpf: 15 },
+  { id: 'publicidad', name: 'Publicidad', schedule: '11+1', dayRate: 0, extraRate: 0, irpf: 15 },
+  { id: 'otros', name: 'Otros', schedule: '10+1', dayRate: 0, extraRate: 0, irpf: 15 },
+];
+const DEFAULT_PAYROLL_STYLE = { title: 'Cierre Nómina', headerColor: '#a4c2f4', tableColor: '#9fc5e8', logo: '', signature: '' };
+
+function payrollTemplates() {
+  const saved = myProfile().payrollTemplates;
+  return Array.isArray(saved) && saved.length ? saved : DEFAULT_PAYROLL_TEMPLATES;
+}
+function payrollStyle() { return { ...DEFAULT_PAYROLL_STYLE, ...(myProfile().payrollStyle || {}) }; }
+
 function payrollDialog(payroll) {
   const p = myProfile();
   if (!payroll && !p.name) { state.notice = 'Rellena antes «Mis datos»: nombre, DNI y cuenta para el cierre de nómina.'; render(); return; }
-  const current = payroll || { projectId: '', shootDate: toSwift(startOfDay(new Date())), days: 1, dayRate: 0, extraRate: 0, irpf: 0, extras: [{ day: 0, schedule: '', hours: 0 }] };
+  const first = payrollTemplates()[0];
+  const current = payroll || { projectId: '', production: '', shootDate: toSwift(startOfDay(new Date())), days: 1, schedule: first.schedule,
+    dayRate: first.dayRate, extraRate: first.extraRate, irpf: first.irpf, extras: [{ day: 0, schedule: '', hours: 0 }] };
+  const person = payroll ? payroll.person : p;
   const extras = current.extras.length ? current.extras : [{ day: 0, schedule: '', hours: 0 }];
+  const templates = payrollTemplates();
   openModal(payroll ? 'Editar nómina' : 'Nueva nómina', 'payroll',
-    projectOptions(current.projectId)
-    + field('Fecha de rodaje', 'shootDate', toInput(fromSwift(current.shootDate)), 'type="date" required')
-    + `<div class="pair">${field('Jornadas', 'days', current.days, 'inputmode="decimal" required')}${field('Tarifa por jornada (€)', 'dayRate', current.dayRate || '', 'inputmode="decimal" required')}</div>`
-    + `<div class="pair">${field('Tarifa hora extra (€)', 'extraRate', current.extraRate || '', 'inputmode="decimal"')}${field('Retención IRPF (%)', 'irpf', current.irpf || '', 'inputmode="decimal"')}</div>`
-    + rowsField('Horas extra: día, horario y horas', extraLineHTML, extras),
+    `<div class="line">${select('Plantilla', 'template', [['', 'Elegir plantilla…'], ...templates.map((t) => [t.id, t.name])], '').replace('<select ', '<select data-template ')}
+      <button type="button" class="link" data-action="template-save">Guardar como plantilla</button>
+      <button type="button" class="link danger" data-action="template-delete">Eliminar</button></div>`
+    + projectOptions(current.projectId)
+    + `<div class="pair">${field('Productora', 'production', current.production ?? '')}${field('Fecha de rodaje', 'shootDate', toInput(fromSwift(current.shootDate)), 'type="date" required')}</div>`
+    + `<div class="pair">${field('Jornadas', 'days', current.days, 'inputmode="decimal" required')}${field('Tipo de jornada', 'schedule', current.schedule || '11+1', 'placeholder="11+1"')}</div>`
+    + `<div class="pair">${field('Tarifa por jornada (€)', 'dayRate', current.dayRate || '', 'inputmode="decimal" required')}${field('Tarifa hora extra (€)', 'extraRate', current.extraRate || '', 'inputmode="decimal"')}</div>`
+    + field('Retención IRPF (%)', 'irpf', current.irpf || '', 'inputmode="decimal"')
+    + rowsField('Horas extra: día, horario y horas', extraLineHTML, extras)
+    + `<details class="field"><summary>Datos del técnico</summary>
+      <div class="pair">${field('Nombre', 'pName', person.name, 'required')}${field('Apellidos', 'pSurname', person.surname)}</div>
+      <div class="pair">${field('Cargo', 'pRole', person.role)}${field('DNI', 'pTaxId', person.taxId)}</div>
+      <div class="pair">${field('Email', 'pEmail', person.email, 'type="email"')}${field('Teléfono', 'pPhone', person.phone, 'type="tel"')}</div>
+      ${field('Nº de cuenta (IBAN)', 'pIban', person.iban)}</details>`,
     { id: payroll ? payroll.id : '', remove: payroll ? 'payroll-delete' : null });
+}
+
+function applyPayrollTemplate(selectEl) {
+  const template = payrollTemplates().find((t) => t.id === selectEl.value);
+  if (!template) return;
+  const form = selectEl.form;
+  for (const key of ['schedule', 'dayRate', 'extraRate', 'irpf']) {
+    form.querySelector(`[name="${key}"]`).value = template[key] ? String(template[key]).replace('.', ',') : '';
+  }
+}
+
+function savePayrollTemplate(button) {
+  const form = button.form;
+  const chosen = payrollTemplates().find((t) => t.id === form.querySelector('[name="template"]').value);
+  const name = window.prompt('Nombre de la plantilla', chosen ? chosen.name : '');
+  if (!name || !name.trim()) return;
+  const value = (key) => form.querySelector(`[name="${key}"]`).value;
+  const template = { schedule: value('schedule').trim(), dayRate: parseAmount(value('dayRate')), extraRate: parseAmount(value('extraRate')), irpf: parseAmount(value('irpf')) };
+  const templates = payrollTemplates().filter((t) => !sameText(t.name, name));
+  templates.push({ id: newID(), name: name.trim(), ...template });
+  saveProfileQuietly({ payrollTemplates: templates }, form, `Plantilla «${name.trim()}» guardada.`);
+}
+
+function deletePayrollTemplate(button) {
+  const form = button.form;
+  const chosen = payrollTemplates().find((t) => t.id === form.querySelector('[name="template"]').value);
+  if (!chosen) return showFormError(form, 'Elige primero la plantilla que quieres eliminar.');
+  if (!window.confirm(`¿Eliminar la plantilla «${chosen.name}»?`)) return;
+  saveProfileQuietly({ payrollTemplates: payrollTemplates().filter((t) => t.id !== chosen.id) }, form, 'Plantilla eliminada.');
+}
+
+/** Saves profile fields without closing the open dialog, then refreshes its template list. */
+async function saveProfileQuietly(changes, form, done) {
+  const profile = { ...myProfile(), ...changes };
+  try {
+    await saveRecord('profiles', profile);
+    state.profile = profile;
+    const select = form.querySelector('[name="template"]');
+    select.innerHTML = [['', 'Elegir plantilla…'], ...payrollTemplates().map((t) => [t.id, t.name])]
+      .map(([v, t]) => `<option value="${esc(v)}">${esc(t)}</option>`).join('');
+    showFormError(form, done);
+  } catch (error) {
+    showFormError(form, message(error));
+  }
+}
+
+function payrollStyleDialog() {
+  const style = payrollStyle();
+  const image = (name, label, value) => `<div class="field">${label}
+    ${value ? `<img class="style-preview" src="${value}" alt="">` : ''}
+    <input class="input" type="file" name="${name}" accept="image/png,image/jpeg,image/svg+xml">
+    ${value ? `<label class="check"><input type="checkbox" name="${name}Remove"> Quitar</label>` : ''}</div>`;
+  openModal('Diseño de la hoja', 'payrollStyle',
+    field('Título del encabezado', 'title', style.title, 'required')
+    + `<div class="pair">${field('Color del encabezado', 'headerColor', style.headerColor, 'type="color"')}${field('Color de las tablas', 'tableColor', style.tableColor, 'type="color"')}</div>`
+    + image('logo', 'Logo (aparece al pie)', style.logo)
+    + image('signature', 'Firma', style.signature)
+    + '<button type="button" class="link" data-action="style-reset">Volver al diseño original</button>');
+}
+
+/** Shrinks an image to at most 500 px wide so it fits in the database record. */
+function imageToDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('No se pudo leer la imagen.'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('El archivo no es una imagen válida.'));
+      img.onload = () => {
+        const scale = Math.min(1, 500 / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function payrollStyleForm(values, id, form) {
+  const style = payrollStyle();
+  const next = { ...style, title: values.title.trim() || DEFAULT_PAYROLL_STYLE.title, headerColor: values.headerColor, tableColor: values.tableColor };
+  try {
+    for (const key of ['logo', 'signature']) {
+      if (values[`${key}Remove`]) next[key] = '';
+      else if (values[key] && values[key].size) next[key] = await imageToDataURL(values[key]);
+    }
+  } catch (error) {
+    return showFormError(form, error.message);
+  }
+  return change(() => saveRecord('profiles', { ...myProfile(), payrollStyle: next }));
 }
 
 /** Fills the form from the chosen project while the person has not typed their own values. */
@@ -142,6 +262,8 @@ function fillFromProject(selectEl) {
   if (description && !description.value) description.value = project.projectName;
   const client = form.querySelector('[name="clientName"]');
   if (client && !client.value) client.value = project.productionCompany || '';
+  const production = form.querySelector('[name="production"]');
+  if (production) production.value = project.productionCompany || '';
   const shootDate = form.querySelector('[name="shootDate"]');
   if (shootDate) {
     shootDate.value = toInput(fromSwift(project.endDate));
@@ -183,14 +305,16 @@ function payrollForm(values, id, form) {
   const extras = days.map((day, index) => ({ day: day ? toSwift(fromInput(day)) : 0, schedule: String(schedules[index]).trim(), hours: parseAmount(hours[index]) }))
     .filter((extra) => extra.day && extra.hours);
   const existing = state.payrolls.find((x) => x.id === id);
-  const p = myProfile();
   const project = state.projects.find((x) => x.id === values.projectId);
+  const text = (key) => String(values[key] || '').trim();
   return change(() => saveRecord('payrolls', {
     id: id || newID(), userId: state.session.user.id,
     projectId: values.projectId, projectName: project ? project.projectName : (existing ? existing.projectName : ''),
+    production: text('production'),
     shootDate: toSwift(fromInput(values.shootDate)),
-    person: { name: p.name, surname: p.surname, role: p.role, taxId: p.taxId, email: p.email, phone: p.phone, iban: p.iban },
-    days: parseAmount(values.days), dayRate: parseAmount(values.dayRate), extraRate: parseAmount(values.extraRate), irpf: parseAmount(values.irpf),
+    person: { name: text('pName'), surname: text('pSurname'), role: text('pRole'), taxId: text('pTaxId'), email: text('pEmail'), phone: text('pPhone'), iban: text('pIban') },
+    days: parseAmount(values.days), schedule: text('schedule') || '11+1',
+    dayRate: parseAmount(values.dayRate), extraRate: parseAmount(values.extraRate), irpf: parseAmount(values.irpf),
     extras,
   }));
 }
@@ -226,20 +350,24 @@ function invoiceSheet(invoice) {
 
 function payrollSheet(payroll) {
   const person = payroll.person;
+  const style = payroll.userId === state.session.user.id ? payrollStyle() : DEFAULT_PAYROLL_STYLE;
+  const schedule = esc(payroll.schedule || '11+1');
   const extraHours = payrollExtraHours(payroll);
   const euros = (value) => `${money(value, { decimals: false })}€`;
   const info = (label, value) => (value ? `<div><u><b>${label}</b></u>: ${esc(value)}</div>` : '');
-  return `<table class="pay-head">
-      <tr><th colspan="2">Cierre Nómina // ${esc(payroll.projectName || 'Sin proyecto')}</th></tr>
+  const title = [payroll.projectName || 'Sin proyecto', payroll.production].filter(Boolean).map(esc).join(' x ');
+  return `<div class="pay-sheet" data-pay-head="${esc(style.headerColor)}" data-pay-table="${esc(style.tableColor)}">
+    <table class="pay-head">
+      <tr><th colspan="2">${esc(style.title)} // ${title}</th></tr>
       <tr><td colspan="2"><b>Fecha de rodaje ${longDate(payroll.shootDate)}</b></td></tr>
       <tr><td>${info('Nombre', person.name)}${info('Apellidos', person.surname)}${info('Cargo', person.role)}${info('DNI', person.taxId)}</td>
         <td>${info('Email', person.email)}${info('Tel', person.phone)}${info('Nº Cuenta', person.iban)}</td></tr>
     </table>
     <table class="pay-table">
-      <thead><tr><th>Jornadas (11+1)</th><th>Tarifa jornada</th><th>Cantidad total</th></tr></thead>
+      <thead><tr><th>Jornadas (${schedule})</th><th>Tarifa jornada</th><th>Cantidad total</th></tr></thead>
       <tbody>
         <tr><td>Shooting Days <b>x ${money(payroll.days, { decimals: false })}</b></td><td>${euros(payroll.dayRate)}</td><td>${euros(payroll.days * payroll.dayRate)}</td></tr>
-        ${extraHours ? `<tr><td>Horas Extra (11+1) <b>x ${hoursText(extraHours)}</b></td><td>${euros(payroll.extraRate)}</td><td>${euros(extraHours * payroll.extraRate)}</td></tr>` : ''}
+        ${extraHours ? `<tr><td>Horas Extra (${schedule}) <b>x ${hoursText(extraHours)}</b></td><td>${euros(payroll.extraRate)}</td><td>${euros(extraHours * payroll.extraRate)}</td></tr>` : ''}
         ${payroll.irpf ? `<tr><td colspan="3"><b>Retención IRPF ${money(payroll.irpf, { decimals: false })}%</b></td></tr>` : ''}
         <tr><td colspan="2"><b>TOTAL BRUTO EN NÓMINA</b></td><td>${euros(payrollTotal(payroll))}</td></tr>
       </tbody>
@@ -248,5 +376,12 @@ function payrollSheet(payroll) {
       <thead><tr><th colspan="3">HORAS EXTRAS</th></tr><tr><th>Día</th><th>Horario</th><th>Extra</th></tr></thead>
       <tbody>${payroll.extras.map((extra) => `<tr><td><b>${longDate(extra.day)}</b></td><td>${esc(extra.schedule)}</td><td>${hoursText(extra.hours)}h</td></tr>`).join('')}</tbody>
     </table>` : ''}
-    <footer class="pay-foot"><div>${esc([person.name, person.surname].filter(Boolean).join(' '))}</div><div>${esc(person.email)}</div><div>${esc(person.phone)}</div></footer>`;
+    ${style.signature ? `<img class="pay-signature" src="${style.signature}" alt="Firma">` : ''}
+    <footer class="pay-foot">
+      <div>${esc([person.name, person.surname].filter(Boolean).join(' '))}</div>
+      ${person.role ? `<div>${esc(person.role)}${person.taxId ? ` · ${esc(person.taxId)}` : ''}</div>` : ''}
+      <div>${esc(person.email)}</div><div>${esc(person.phone)}</div>
+      ${style.logo ? `<img class="pay-logo" src="${style.logo}" alt="Logo">` : ''}
+    </footer>
+  </div>`;
 }
