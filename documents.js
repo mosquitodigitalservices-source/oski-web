@@ -269,7 +269,23 @@ function fillFromProject(selectEl) {
     shootDate.value = toInput(fromSwift(project.endDate));
     const days = Math.round((startOfDay(fromSwift(project.endDate)) - startOfDay(fromSwift(project.date))) / 86400000) + 1;
     form.querySelector('[name="days"]').value = days;
+    fillProjectDays(form, project, days);
   }
+}
+
+/** One extra-hours line per shooting day, keeping whatever was already typed for a day. */
+function fillProjectDays(form, project, days) {
+  const rows = form.querySelector('[name="extraDay"]').closest('[data-rows]');
+  const typed = new Map([...rows.querySelectorAll('.line')].map((line) => [
+    line.querySelector('[name="extraDay"]').value,
+    { schedule: line.querySelector('[name="extraSchedule"]').value, hours: parseAmount(line.querySelector('[name="extraHours"]').value) },
+  ]));
+  const start = startOfDay(fromSwift(project.date));
+  rows.innerHTML = Array.from({ length: Math.min(days, 60) }, (_, index) => {
+    const day = new Date(start.getFullYear(), start.getMonth(), start.getDate() + index);
+    const kept = typed.get(toInput(day)) || { schedule: '', hours: 0 };
+    return extraLineHTML({ day: toSwift(day), ...kept });
+  }).join('');
 }
 
 // ---------- forms
