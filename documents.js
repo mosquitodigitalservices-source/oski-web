@@ -204,6 +204,36 @@ function applyPayrollTemplate(selectEl) {
   for (const key of ['schedule', 'dayRate', 'extraRate', 'irpf']) {
     form.querySelector(`[name="${key}"]`).value = template[key] ? String(template[key]).replace('.', ',') : '';
   }
+  fillExtraHours(form);
+}
+
+/** Hours a day rate covers: "11+1" is 12 (11 of work plus 1 for lunch). */
+function coveredHours(dayType) {
+  const parts = String(dayType).match(/\d+(?:[.,]\d+)?/g) || [];
+  return parts.reduce((sum, part) => sum + parseFloat(part.replace(',', '.')), 0);
+}
+
+/** Length of a schedule such as "09:00 - 21:30" (12,5), past midnight when the end is earlier. */
+function scheduleLength(schedule) {
+  const times = [...String(schedule).matchAll(/(\d{1,2})(?:[:.h](\d{2}))?/g)];
+  if (times.length < 2) return null;
+  const minutes = ([, h, m]) => Number(h) * 60 + Number(m || 0);
+  let length = minutes(times[1]) - minutes(times[0]);
+  if (length <= 0) length += 24 * 60;
+  return length / 60;
+}
+
+/** Fills each day's extra hours: whatever the schedule lasts beyond the hours of the day type. */
+function fillExtraHours(form, onlyLine) {
+  const covered = coveredHours(form.querySelector('[name="schedule"]').value);
+  if (!covered) return;
+  const lines = onlyLine ? [onlyLine] : [...form.querySelectorAll('[name="extraSchedule"]')].map((input) => input.closest('.line'));
+  for (const line of lines) {
+    const length = scheduleLength(line.querySelector('[name="extraSchedule"]').value);
+    if (length === null) continue;
+    const extra = Math.round(Math.max(0, length - covered) * 100) / 100;
+    line.querySelector('[name="extraHours"]').value = extra ? String(extra).replace('.', ',') : '';
+  }
 }
 
 function savePayrollTemplate(button) {

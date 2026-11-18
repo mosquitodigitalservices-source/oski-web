@@ -860,6 +860,10 @@ document.addEventListener('input', (event) => {
     const box = app.querySelector('[data-input="search"]');
     box.focus();
     box.setSelectionRange(box.value.length, box.value.length);
+  } else if (el.name === 'extraSchedule') {
+    fillExtraHours(el.form, el.closest('.line'));
+  } else if (el.name === 'schedule' && el.form && el.form.querySelector('[name="extraSchedule"]')) {
+    fillExtraHours(el.form);
   }
 });
 
