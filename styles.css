@@ -119,9 +119,11 @@ main{max-width:1280px;margin:0 auto;padding:32px 32px 80px}
 
 .lines{display:flex;flex-direction:column;gap:8px;margin-top:2px}
 .line{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
-.line .input{width:auto;flex:1 1 130px;min-width:0}
-.line .input.grow{flex:3 1 160px}
-.line .input.amount{flex:0 1 96px;text-align:right}
+.line>.input{width:auto;flex:1 1 130px;min-width:0}
+.line>.input.grow{flex:3 1 160px}
+.line>.input.amount{flex:0 1 96px;text-align:right}
+.line>.field{flex:1 1 160px;min-width:0}
+.line:has(>.field){align-items:flex-end}
 .field>.link{align-self:flex-start;padding-left:0}
 .nav-bottom{overflow-x:auto}
 .nav-bottom button{flex:1 0 auto;padding-left:10px;padding-right:10px}
