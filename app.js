@@ -25,13 +25,13 @@ const LEVELS = {
   collaborator: ['Colaborador', 'Ve el calendario del equipo y reserva material.'],
   manager: ['Encargado', 'Edita proyectos, inventario y técnicos.'],
 };
-const PAGES = [['calendar', 'Calendario'], ['projects', 'Proyectos'], ['items', 'Ítems'], ['team', 'Técnicos'], ['invoices', 'Facturas'], ['payrolls', 'Nóminas']];
+const PAGES = [['calendar', 'Calendario'], ['projects', 'Proyectos'], ['items', 'Ítems'], ['team', 'Técnicos'], ['quotes', 'Presupuestos'], ['invoices', 'Facturas'], ['payrolls', 'Nóminas']];
 
 const state = {
   session: null, memberships: [], membership: null,
   authMode: 'signIn', awaitingCode: false, recovering: false, authEmail: '', authError: '', authInfo: '', busy: false,
   page: 'calendar', calendarMode: 'projects', anchor: startOfDay(new Date()), selectedDay: null,
-  items: [], technicians: [], projects: [], settings: null, invoices: [], payrolls: [], profile: null, sheet: null,
+  items: [], technicians: [], projects: [], settings: null, quotes: [], invoices: [], payrolls: [], profile: null, sheet: null,
   search: '', categoryFilter: '', statusFilter: '', notice: '',
 };
 
@@ -124,6 +124,7 @@ async function loadData() {
   state.technicians = of('technicians');
   state.projects = of('projects');
   state.settings = of('settings')[0] || null;
+  state.quotes = of('quotes');
   state.invoices = of('invoices');
   state.payrolls = of('payrolls');
   state.profile = of('profiles').find((p) => p.userId === state.session.user.id) || null;
@@ -296,7 +297,7 @@ function authHTML() {
 }
 
 function dashboardHTML() {
-  const pages = PAGES.filter(([id]) => (id !== 'team' || canViewTeam()) && (id !== 'invoices' || canManage()));
+  const pages = PAGES.filter(([id]) => (id !== 'team' || canViewTeam()) && (!['quotes', 'invoices'].includes(id) || canManage()));
   const nav = pages.map(([id, label]) =>
     `<button type="button" data-action="page" data-page="${id}" ${state.page === id ? 'aria-current="page"' : ''}>${label}</button>`).join('');
   const m = state.membership;
@@ -305,7 +306,7 @@ function dashboardHTML() {
         `<option value="${x.company_id}" ${x === m ? 'selected' : ''}>${esc(x.company.name)}</option>`).join('')}</select>`
     : `<span>${esc(m.company.name)}</span>`;
   const page = state.sheet ? sheetHTML()
-    : { calendar: calendarHTML, projects: projectsHTML, items: itemsHTML, team: teamHTML, invoices: invoicesHTML, payrolls: payrollsHTML }[state.page]();
+    : { calendar: calendarHTML, projects: projectsHTML, items: itemsHTML, team: teamHTML, quotes: quotesHTML, invoices: invoicesHTML, payrolls: payrollsHTML }[state.page]();
 
   return `<header class="top">
     <div class="brand">OSKI</div>
@@ -896,6 +897,11 @@ const actions = {
   'style-reset': () => change(() => saveRecord('profiles', { ...myProfile(), payrollStyle: {} })),
   'doc-close': () => { state.sheet = null; render(); },
   'doc-print': () => window.print(),
+  /** Opens the document and, once it is drawn, the browser's print dialog to save it as PDF. */
+  'doc-export': (el) => {
+    state.sheet = { type: el.dataset.type, id: el.dataset.id }; render(); window.scrollTo(0, 0);
+    setTimeout(() => window.print(), 150);
+  },
   'row-add': (el) => {
     const rows = el.parentElement.querySelector('[data-rows]');
     const row = rows.lastElementChild.cloneNode(true);

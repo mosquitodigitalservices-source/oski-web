@@ -59,6 +59,7 @@ function invoicesHTML() {
     <span class="amount">${money(invoiceTotal(invoice))} €</span>
     <button type="button" class="badge pay ${paid ? 'paid' : 'due'}" data-action="invoice-paid" data-id="${invoice.id}" title="Cambiar estado de pago">${paid ? 'Pagada' : 'Pendiente'}</button>
     <button type="button" class="btn small" data-action="doc-open" data-type="invoice" data-id="${invoice.id}">Ver</button>
+    <button type="button" class="btn small" data-action="doc-export" data-type="invoice" data-id="${invoice.id}" title="Exportar documento: guardar la factura en PDF">Exportar</button>
     <button type="button" class="icon-btn" data-action="invoice-edit" data-id="${invoice.id}" aria-label="Editar factura">✎</button>
   </div>`;
   };
@@ -74,6 +75,105 @@ function invoicesHTML() {
     <button type="button" class="btn primary" data-action="invoice-new">+ Nueva factura</button>
   </div>
   <section class="box">${body || '<p class="empty">Todavía no hay facturas.</p>'}</section>`;
+}
+
+// ---------- quotes (made in the Mac app; here they are only listed and exported)
+
+const QUOTE_MAX = { quantity: 9999, days: 3650, overtime: 1000 };
+const NOT_AN_INVOICE = 'Este documento no es una factura.';
+
+function clampInt(value, low, high) { return Math.min(Math.max(Math.trunc(Number(value) || 0), low), high); }
+/** Rounds half up, like the app: a percentage of an amount in cents. */
+function percentOf(percent, cents) { return Math.floor((cents * percent + 50) / 100); }
+/** Cents of one quote line; the same sums as the Mac app (every day counts as one day rate). */
+function quoteLineCents(line) {
+  const quantity = clampInt(line.quantity, 1, QUOTE_MAX.quantity);
+  const rate = Math.max(0, Number(line.unitDayRate) || 0);
+  if (line.kind === 'Técnico') {
+    const overtime = clampInt(line.overtimeHours, 0, QUOTE_MAX.overtime) * Math.max(0, Number(line.overtimeHourRate) || 0);
+    return (clampInt(line.days, 1, QUOTE_MAX.days) * rate + overtime) * quantity;
+  }
+  if (line.kind === 'Material') return clampInt(line.days, 1, QUOTE_MAX.days) * rate * quantity;
+  return rate * quantity;
+}
+function quoteTotals(quote) {
+  const subtotal = (quote.lines || []).reduce((sum, line) => sum + quoteLineCents(line), 0);
+  const discount = percentOf(clampInt(quote.discountPercent, 0, 100), subtotal);
+  const base = subtotal - discount;
+  const tax = percentOf(clampInt(quote.taxPercent ?? 21, 0, 100), base);
+  return { subtotal, discount, base, tax, total: base + tax };
+}
+function centsText(cents) { return `€${money(Math.abs(cents) / 100)}`.replace(/^/, cents < 0 ? '-' : ''); }
+/** "3 días × €90,00" or "3 jornadas × €350,00 + 2 h extra × €45,00", as the app prints it. */
+function quoteLineDetail(line) {
+  const quantity = clampInt(line.quantity, 1, QUOTE_MAX.quantity);
+  const prefix = quantity > 1 ? `${quantity} × ` : '';
+  const days = clampInt(line.days, 1, QUOTE_MAX.days);
+  if (line.kind === 'Material') return `${prefix}${days === 1 ? '1 día' : `${days} días`} × ${centsText(line.unitDayRate || 0)}`;
+  if (line.kind === 'Técnico') {
+    const base = `${prefix}${days === 1 ? '1 jornada' : `${days} jornadas`} × ${centsText(line.unitDayRate || 0)}`;
+    const hours = clampInt(line.overtimeHours, 0, QUOTE_MAX.overtime);
+    return hours ? `${base} + ${hours} h extra × ${centsText(line.overtimeHourRate || 0)}` : base;
+  }
+  return quantity > 1 ? `${quantity} × ${centsText(line.unitDayRate || 0)}` : '';
+}
+
+function quotesHTML() {
+  const sorted = [...state.quotes].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const row = (quote) => `<div class="row">
+    <div class="main"><b>${esc(quote.number || 'Sin número')} · ${esc(quote.clientName || 'Sin cliente')}</b>
+      <span>${esc(quote.projectName || '')} · ${rangeText(fromSwift(quote.startDate || 0), fromSwift(quote.endDate || quote.startDate || 0))}</span></div>
+    <span class="badge">${esc(quote.status || 'Borrador')}</span>
+    <span class="amount">${money(quoteTotals(quote).total / 100)} €</span>
+    <button type="button" class="btn small" data-action="doc-open" data-type="quote" data-id="${quote.id}">Ver</button>
+    <button type="button" class="btn small" data-action="doc-export" data-type="quote" data-id="${quote.id}" title="Exportar documento: guardar el presupuesto en PDF">Exportar</button>
+  </div>`;
+  return `<div class="page-title">
+    <h1 class="eyebrow">Presupuestos</h1>
+    <button type="button" class="btn" data-action="profile-edit" data-kind="company">Mis datos</button>
+  </div>
+  <section class="box">
+    <p class="muted">Los presupuestos se crean en la app de OSKI para Mac. Aquí puedes verlos y exportarlos con la plantilla de las facturas.</p>
+    ${sorted.length ? `<div class="rows">${sorted.map(row).join('')}</div>` : '<p class="empty">Todavía no hay presupuestos.</p>'}
+  </section>`;
+}
+
+/** A quote drawn with the invoice template, titled PRESUPUESTO, with the issuer from «Mis datos». */
+function quoteSheet(quote) {
+  const issuer = myProfile();
+  const totals = quoteTotals(quote);
+  const lines = (party) => party.filter(Boolean).map((line) => `<div>${esc(line)}</div>`).join('');
+  const banks = String(issuer.banks || '').split('\n').map((b) => b.trim()).filter(Boolean);
+  const terms = issuer.paymentTerms || `Transferencia bancaria a ${quote.paymentTermDays ?? 30} días f.f.`;
+  const range = rangeText(fromSwift(quote.startDate || 0), fromSwift(quote.endDate || quote.startDate || 0));
+  return `<header class="inv-top">
+      <h1>PRESUPUESTO</h1>
+      <div class="inv-issuer">${lines([issuer.name, issuer.address1, issuer.address2, issuer.taxId])}</div>
+      ${issuer.logo ? `<img class="inv-logo" src="${issuer.logo}" alt="">` : '<span class="inv-logo"></span>'}
+    </header>
+    <div class="inv-meta">
+      <div class="inv-client">${lines([quote.clientName, quote.clientAddress1, quote.clientAddress2, quote.clientTaxId])}</div>
+      <table class="inv-info"><tr><th>Nº Presupuesto</th><td>${esc(quote.number || '')}</td></tr>
+        <tr><th>Fecha</th><td>${longDate(quote.createdAt || 0).replace(/\//g, '.')}</td></tr></table>
+    </div>
+    <div class="inv-head"><span>CONCEPTO</span><span>IMPORTE</span></div>
+    <div class="inv-body">
+      ${quote.projectName ? `<p class="inv-ref">Referencia: "${esc(quote.projectName)}" · ${range}</p>` : ''}
+      ${(quote.lines || []).map((line) => `<div class="inv-line"><b>${esc(line.description || line.kind || '')}</b><span>${esc(quoteLineDetail(line))}</span><span>${centsText(quoteLineCents(line))}</span></div>`).join('')}
+      ${quote.notes ? `<p>${esc(quote.notes)}</p>` : ''}
+    </div>
+    <table class="inv-totals">
+      <tr><td></td><th>SubTotal</th><td>${centsText(totals.subtotal)}</td></tr>
+      ${totals.discount ? `<tr><td></td><th>Descuento (${clampInt(quote.discountPercent, 0, 100)}%)</th><td>${centsText(-totals.discount)}</td></tr>` : ''}
+      <tr><td></td><th>IVA (${clampInt(quote.taxPercent ?? 21, 0, 100)}%)</th><td>${centsText(totals.tax)}</td></tr>
+      <tr class="inv-total"><td><b>Forma de Pago:</b> ${esc(terms)}</td><th>TOTAL</th><td>${centsText(totals.total)}</td></tr>
+    </table>
+    <footer class="inv-foot">
+      <div class="inv-contact">${issuer.email || issuer.phone ? '<b>Contacto:</b>' : ''}${issuer.email ? `<div>${esc(issuer.email)}</div>` : ''}${issuer.phone ? `<div>Tlf: ${esc(issuer.phone)}</div>` : ''}</div>
+      <div class="inv-banks">${banks.length ? `<b>Datos Bancarios:</b>${banks.map((b) => `<div>${esc(b)}</div>`).join('')}` : ''}</div>
+      ${issuer.registry ? `<p class="inv-registry">${esc(issuer.registry)}</p>` : ''}
+      <p class="inv-registry">${NOT_AN_INVOICE}</p>
+    </footer>`;
 }
 
 function payrollsHTML() {
@@ -465,13 +565,16 @@ function payrollForm(values, id, form) {
 
 function sheetHTML() {
   const { type, id } = state.sheet;
-  const record = (type === 'invoice' ? state.invoices : state.payrolls).find((x) => x.id === id);
-  const body = !record ? '<p class="empty">Este documento ya no existe.</p>' : (type === 'invoice' ? invoiceSheet(record) : payrollSheet(record));
+  const records = { invoice: state.invoices, quote: state.quotes, payroll: state.payrolls }[type] || [];
+  const record = records.find((x) => x.id === id);
+  const sheet = { invoice: invoiceSheet, quote: quoteSheet, payroll: payrollSheet }[type];
+  const body = !record || !sheet ? '<p class="empty">Este documento ya no existe.</p>' : sheet(record);
+  // Quotes use the invoice template, so they share its look.
   return `<div class="sheet-bar">
     <button type="button" class="btn" data-action="doc-close">Volver</button>
-    <button type="button" class="btn primary" data-action="doc-print">Imprimir o guardar PDF</button>
+    <button type="button" class="btn primary" data-action="doc-print">Exportar documento (PDF)</button>
   </div>
-  <article class="sheet ${type}">${body}</article>`;
+  <article class="sheet ${type === 'quote' ? 'invoice' : type}">${body}</article>`;
 }
 
 function invoiceSheet(invoice) {
