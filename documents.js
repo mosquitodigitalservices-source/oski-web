@@ -27,10 +27,18 @@ function invoiceTotal(invoice) { return invoiceSubtotal(invoice) + invoiceVat(in
 const DEFAULT_PAYMENT_TERMS = 'Transferencia bancaria a 30 días f.f.';
 function payrollExtraHours(payroll) { return payroll.extras.reduce((sum, extra) => sum + (Number(extra.hours) || 0), 0); }
 function payrollTotal(payroll) { return payroll.days * payroll.dayRate + payrollExtraHours(payroll) * payroll.extraRate; }
+/** Upcoming projects of the technicians first (soonest on top), then the past ones, so a new
+ *  document starts from what is coming without losing the jobs already done. */
 function projectOptions(selected) {
-  const options = [['', 'Sin proyecto'], ...[...state.projects].sort((a, b) => b.date - a.date)
-    .map((p) => [p.id, `${p.projectName} · ${shortDate(fromSwift(p.date))}`])];
-  return select('Proyecto', 'projectId', options, selected || '').replace('<select ', '<select data-project ');
+  const label = (p) => [p.projectName, p.productionCompany, rangeText(fromSwift(p.date), fromSwift(p.endDate)), p.employeeName]
+    .filter(Boolean).join(' · ');
+  const option = (p) => `<option value="${esc(p.id)}" ${p.id === selected ? 'selected' : ''}>${esc(label(p))}</option>`;
+  const group = (title, projects) => (projects.length ? `<optgroup label="${title}">${projects.map(option).join('')}</optgroup>` : '');
+  const upcoming = state.projects.filter((p) => !isPast(p.endDate)).sort((a, b) => a.date - b.date);
+  const past = state.projects.filter((p) => isPast(p.endDate)).sort((a, b) => b.date - a.date);
+  return `<label class="field">Proyecto<select class="input" name="projectId" data-project>
+    <option value="" ${selected ? '' : 'selected'}>Sin proyecto</option>${group('Próximos proyectos', upcoming)}${group('Anteriores', past)}
+  </select></label>`;
 }
 
 // ---------- pages
