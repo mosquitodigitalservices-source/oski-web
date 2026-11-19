@@ -323,18 +323,40 @@ function visibleProjects() {
   return [...state.projects].sort((a, b) => b.date - a.date);
 }
 
+function isPast(endSeconds) { return startOfDay(fromSwift(endSeconds)).getTime() < startOfDay(new Date()).getTime(); }
+
+/** Material reserved for a project: linked to it, or reserved under its name on overlapping days. */
+function projectItems(project) {
+  const start = startOfDay(fromSwift(project.date)).getTime(); const end = startOfDay(fromSwift(project.endDate)).getTime();
+  return state.items.filter((item) => {
+    if (item.status !== 'Ocupado') return false;
+    if (item.projectId) return item.projectId === project.id;
+    const from = startOfDay(fromSwift(item.day)).getTime(); const to = startOfDay(fromSwift(item.endDay ?? item.day)).getTime();
+    return sameText(String(item.notes || '').split(' · ')[0], project.projectName) && from <= end && start <= to;
+  }).sort((a, b) => a.name.localeCompare(b.name, 'es'));
+}
+
 function projectRow(project) {
   const editable = canManage() || isMine(project);
-  return `<div class="row">
+  const items = projectItems(project);
+  const paid = project.paid === true;
+  const status = `class="badge pay ${paid ? 'paid' : 'due'}"`;
+  return `<div class="row ${isPast(project.endDate) ? 'past' : ''}">
     <i class="dot" data-color="${techColor(project.employeeName)}"></i>
     <div class="main"><b>${esc(project.projectName)}${project.productionCompany ? ` · ${esc(project.productionCompany)}` : ''}</b><span>${esc(project.employeeName)}</span></div>
     <span class="when">${rangeText(fromSwift(project.date), fromSwift(project.endDate))}</span>
+    ${editable ? `<button type="button" ${status} data-action="project-paid" data-id="${project.id}" title="Cambiar estado de pago">${paid ? 'Pagado' : 'Pendiente'}</button>`
+      : `<span ${status}>${paid ? 'Pagado' : 'Pendiente'}</span>`}
+    <details class="pop"><summary class="btn small">Material${items.length ? ` (${items.length})` : ''}</summary>
+      <div class="pop-panel"><b>Material alquilado</b>${items.length
+        ? `<ul>${items.map((i) => `<li>${esc(i.name)}<span>${esc(i.category)} · ${rangeText(fromSwift(i.day), fromSwift(i.endDay ?? i.day))}</span></li>`).join('')}</ul>`
+        : '<p class="muted">Ningún ítem reservado para este proyecto.</p>'}</div></details>
     ${editable ? `<button type="button" class="icon-btn" data-action="project-edit" data-id="${project.id}" aria-label="Editar proyecto">✎</button>` : ''}
   </div>`;
 }
 
 function itemReservationRow(item) {
-  return `<div class="row">
+  return `<div class="row ${isPast(item.endDay ?? item.day) ? 'past' : ''}">
     <div class="main"><b>${esc(item.name)}</b><span>${esc(item.notes || '-')}</span></div>
     <span class="when">${rangeText(fromSwift(item.day), fromSwift(item.endDay ?? item.day))}</span>
     ${canViewTeam() ? `<button type="button" class="icon-btn" data-action="item-release" data-id="${item.id}" aria-label="Liberar ítem">×</button>` : ''}
@@ -352,13 +374,14 @@ function calendarHTML() {
   const entries = inventory
     ? state.items.filter((i) => i.status === 'Ocupado').map((i) => ({ start: i.day, end: i.endDay ?? i.day, color: techColor(i.notes) }))
     : state.projects.map((p) => ({ start: p.date, end: p.endDate, color: techColor(p.employeeName) }));
+  entries.forEach((e) => { e.past = isPast(e.end); });
 
   let cells = ['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((d, i) => `<div class="wd ${i > 4 ? 'we' : ''}">${d}</div>`).join('');
   for (let i = 0; i < weeks * 7; i += 1) {
     const day = new Date(gridStart); day.setDate(gridStart.getDate() + i);
     const time = day.getTime();
     const bars = entries.filter((e) => startOfDay(fromSwift(e.start)).getTime() <= time && time <= startOfDay(fromSwift(e.end)).getTime())
-      .slice(0, 3).map((e) => `<i data-color="${e.color}"></i>`).join('');
+      .slice(0, 3).map((e) => `<i data-color="${e.color}" ${e.past ? 'class="past"' : ''}></i>`).join('');
     const classes = ['day', day.getMonth() !== month.getMonth() ? 'out' : '', time === today ? 'today' : '',
       state.selectedDay && state.selectedDay.getTime() === time ? 'sel' : ''].join(' ');
     cells += `<button type="button" class="${classes}" data-action="day" data-day="${toInput(day)}" aria-label="${day.toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })}">
@@ -442,7 +465,7 @@ function itemsHTML() {
 
   return `<div class="page-title">
     <h1 class="eyebrow">Ítems</h1>
-    ${canManage() ? '<button type="button" class="btn primary" data-action="item-new">+ Nuevo ítem</button>' : ''}
+    ${canManage() ? '<button type="button" class="btn" data-action="items-import">Importar</button><button type="button" class="btn primary" data-action="item-new">+ Nuevo ítem</button>' : ''}
   </div>
   <div class="filters">
     <input class="input" type="search" placeholder="Buscar ítem" value="${esc(state.search)}" data-input="search" aria-label="Buscar ítem">
@@ -542,6 +565,7 @@ function reserveDialog(item) {
   if (!item && !free.length) { state.notice = 'No queda material disponible para reservar.'; render(); return; }
   openModal('Reservar material', 'reserve',
     (item ? `<p class="muted">${esc(item.name)}</p>` : select('Ítem', 'item', free.map((i) => [i.id, i.name]), ''))
+    + select('Proyecto de OSKI', 'projectId', [['', 'Ninguno (escribir abajo)'], ...visibleProjects().map((p) => [p.id, `${p.projectName} · ${shortDate(fromSwift(p.date))}`])], '').replace('<select ', '<select data-reserve-project ')
     + field('Proyecto', 'project') + field('Productora o técnico', 'company') + dates(day, day),
     { id: item ? item.id : '', submit: 'Reservar' });
 }
@@ -551,6 +575,15 @@ function itemDialog() {
     field('Nombre', 'name', '', 'required')
     + selectWithNew('Categoría', 'category', categories(), 'Accesories'),
     { submit: 'Añadir' });
+}
+
+function itemsImportDialog() {
+  openModal('Importar ítems', 'itemsImport',
+    '<p class="muted">Excel (.xlsx), CSV, Word (.docx), PDF, RTF o texto. Una línea o fila por ítem. Una línea que acaba en «:» es la categoría de las de debajo.</p>'
+    + '<label class="field">Archivo<input class="input" type="file" name="file" accept=".xlsx,.csv,.docx,.pdf,.rtf,.txt,.md,text/plain"></label>'
+    + '<label class="field">O pega el texto (por ejemplo, una nota del iPhone)<textarea class="input" name="text" rows="5" placeholder="Monitores:\nSony PVM-X2400\nFlanders DM241"></textarea></label>'
+    + select('Categoría si no se indica', 'category', categories(), 'Accesories'),
+    { submit: 'Importar' });
 }
 
 function techDialog(tech) {
@@ -628,8 +661,9 @@ const forms = {
 
   project(values, id) {
     const start = fromInput(values.start); const end = fromInput(values.end);
+    const existing = state.projects.find((p) => p.id === id);
     return change(() => saveRecord('projects', {
-      id: id || newID(), projectName: values.name.trim(), productionCompany: values.company.trim(),
+      ...existing, id: id || newID(), projectName: values.name.trim(), productionCompany: values.company.trim(),
       employeeName: values.employee, date: toSwift(start < end ? start : end), endDate: toSwift(start < end ? end : start),
     }));
   },
@@ -637,8 +671,10 @@ const forms = {
   reserve(values, id) {
     const item = state.items.find((i) => i.id === (id || values.item));
     const start = fromInput(values.start); const end = fromInput(values.end);
-    const notes = [values.project.trim(), values.company.trim()].filter(Boolean).join(' · ');
+    const project = state.projects.find((p) => p.id === values.projectId);
+    const notes = [values.project.trim() || (project ? project.projectName : ''), values.company.trim()].filter(Boolean).join(' · ');
     const record = { ...item, status: 'Ocupado', day: toSwift(start < end ? start : end), notes };
+    if (project) record.projectId = project.id; else delete record.projectId;
     if (start.getTime() === end.getTime()) delete record.endDay; else record.endDay = toSwift(start < end ? end : start);
     return change(() => saveRecord('items', record));
   },
@@ -671,6 +707,41 @@ const forms = {
       color: existing ? existing.color : TECH_COLORS[state.technicians.length % TECH_COLORS.length],
       phone: values.phone.trim(), email: values.email.trim(),
     }));
+  },
+
+  async itemsImport(values, id, form) {
+    let drafts;
+    try {
+      drafts = values.file && values.file.size ? await readItemsFile(values.file) : draftsFromText(values.text || '');
+    } catch (error) {
+      return showFormError(form, error.message);
+    }
+    if (!drafts.length) return showFormError(form, 'No se ha encontrado ningún ítem. Elige un archivo o pega el texto.');
+    const names = new Set(state.items.map((i) => i.name.trim().toLowerCase()));
+    const created = [];
+    const records = [];
+    for (const draft of drafts) {
+      const key = draft.name.trim().toLowerCase();
+      if (names.has(key)) continue;
+      names.add(key);
+      let category = values.category;
+      if (draft.category) {
+        category = [...categories(), ...created].find((c) => sameText(c, draft.category)) || draft.category;
+        if (category === draft.category && !categories().some((c) => sameText(c, category)) && !created.includes(category)) created.push(category);
+      }
+      records.push({ id: newID(), name: draft.name.trim(), status: 'Disponible', category, day: toSwift(new Date()), notes: '' });
+    }
+    if (!records.length) return showFormError(form, `Los ${drafts.length} ítems del archivo ya estaban en el inventario.`);
+    return change(async () => {
+      if (created.length) {
+        const settings = state.settings || { id: SETTINGS_ID, customCategories: [], categoryOrder: [], categoryColors: {} };
+        await saveRecord('settings', { ...settings,
+          customCategories: [...(settings.customCategories || []), ...created], categoryOrder: [...(settings.categoryOrder || []), ...created] });
+      }
+      await saveRecords('items', records);
+      const skipped = drafts.length - records.length;
+      state.notice = `${records.length} ítems importados${skipped ? `; ${skipped} ya estaban o se repetían` : ''}.`;
+    });
   },
 
   async calendarImport(values, id, form) {
@@ -779,10 +850,25 @@ const actions = {
   'project-edit': (el) => projectDialog(state.projects.find((p) => p.id === el.dataset.id)),
   'project-delete': (el) => change(() => deleteRecords('projects', [el.dataset.id])),
   'item-new': itemDialog,
+  'items-import': itemsImportDialog,
+  'project-paid': (el) => {
+    const project = state.projects.find((p) => p.id === el.dataset.id);
+    return change(() => saveRecord('projects', { ...project, paid: !(project.paid === true) }));
+  },
+  'invoice-paid': (el) => {
+    const invoice = state.invoices.find((i) => i.id === el.dataset.id);
+    const paid = !(invoice.paid === true);
+    const project = state.projects.find((p) => p.id === invoice.projectId);
+    return change(async () => {
+      await saveRecord('invoices', { ...invoice, paid });
+      // A paid invoice settles its project too.
+      if (project && paid && project.paid !== true) await saveRecord('projects', { ...project, paid: true });
+    });
+  },
   'item-reserve': (el) => reserveDialog(state.items.find((i) => i.id === el.dataset.id) || null),
   'item-release': (el) => {
     const item = { ...state.items.find((i) => i.id === el.dataset.id), status: 'Disponible', day: toSwift(new Date()), notes: '' };
-    delete item.endDay;
+    delete item.endDay; delete item.projectId;
     return change(() => saveRecord('items', item));
   },
   'item-delete': (el) => {
@@ -825,6 +911,8 @@ const actions = {
 };
 
 document.addEventListener('click', (event) => {
+  // One material pop-up open at a time; a click outside closes it.
+  app.querySelectorAll('details.pop[open]').forEach((pop) => { if (!pop.contains(event.target)) pop.open = false; });
   const el = event.target.closest('[data-action]');
   if (el && el.tagName !== 'SELECT' && actions[el.dataset.action]) actions[el.dataset.action](el);
   else if (event.target === modal) closeModal();

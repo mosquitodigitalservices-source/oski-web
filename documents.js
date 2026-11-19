@@ -36,21 +36,36 @@ function projectOptions(selected) {
 // ---------- pages
 
 function invoicesHTML() {
-  const rows = [...state.invoices].sort((a, b) => b.date - a.date || String(b.number).localeCompare(String(a.number), 'es', { numeric: true })).map((invoice) => `<div class="row">
+  const sorted = [...state.invoices].sort((a, b) => b.date - a.date || String(b.number).localeCompare(String(a.number), 'es', { numeric: true }));
+  const groups = new Map();
+  for (const invoice of sorted) {
+    const key = fromSwift(invoice.date).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+    groups.set(key, [...(groups.get(key) || []), invoice]);
+  }
+  const row = (invoice) => {
+    const paid = invoice.paid === true;
+    return `<div class="row inv-row ${paid ? 'paid' : 'due'}">
     <div class="main"><b>Nº ${esc(invoice.number)} · ${esc(invoice.client.name || 'Sin cliente')}</b>
       <span>${esc(invoice.projectName || invoice.lines[0]?.description || '')}</span></div>
     <span class="when">${longDate(invoice.date)}</span>
-    <span class="badge on">${money(invoiceTotal(invoice))} €</span>
+    <span class="amount">${money(invoiceTotal(invoice))} €</span>
+    <button type="button" class="badge pay ${paid ? 'paid' : 'due'}" data-action="invoice-paid" data-id="${invoice.id}" title="Cambiar estado de pago">${paid ? 'Pagada' : 'Pendiente'}</button>
     <button type="button" class="btn small" data-action="doc-open" data-type="invoice" data-id="${invoice.id}">Ver</button>
     <button type="button" class="icon-btn" data-action="invoice-edit" data-id="${invoice.id}" aria-label="Editar factura">✎</button>
-  </div>`).join('');
+  </div>`;
+  };
+  const body = [...groups].map(([month, invoices]) => {
+    const pending = invoices.filter((i) => i.paid !== true).reduce((sum, i) => sum + invoiceTotal(i), 0);
+    return `<h3 class="group"><span>${esc(month)}</span>${pending ? `<span class="group-due">Pendiente ${money(pending)} €</span>` : ''}</h3>
+      <div class="rows">${invoices.map(row).join('')}</div>`;
+  }).join('');
 
   return `<div class="page-title">
     <h1 class="eyebrow">Facturas</h1>
     <button type="button" class="btn" data-action="profile-edit" data-kind="company">Mis datos</button>
     <button type="button" class="btn primary" data-action="invoice-new">+ Nueva factura</button>
   </div>
-  <section class="box">${rows ? `<div class="rows">${rows}</div>` : '<p class="empty">Todavía no hay facturas.</p>'}</section>`;
+  <section class="box">${body || '<p class="empty">Todavía no hay facturas.</p>'}</section>`;
 }
 
 function payrollsHTML() {

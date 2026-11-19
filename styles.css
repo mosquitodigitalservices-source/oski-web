@@ -92,6 +92,27 @@ main{max-width:1280px;margin:0 auto;padding:32px 32px 80px}
 .badge.on{border-color:var(--accent);color:var(--accent)}
 .group{margin:18px 0 6px;font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
 .group:first-child{margin-top:0}
+.group{display:flex;justify-content:space-between;gap:12px}
+.group-due{color:var(--danger);letter-spacing:.02em}
+.row.past .dot,.day .bars i.past{opacity:.5}
+.badge.pay{cursor:pointer;background:none;font:inherit;font-size:12px;font-weight:600}
+span.badge.pay{cursor:default}
+.badge.paid{border-color:#3fb37f;color:#3fb37f;background:rgba(63,179,127,.12)}
+.badge.due{border-color:var(--danger);color:var(--danger);background:rgba(224,92,92,.10)}
+.inv-row{padding-left:10px;border-left:3px solid transparent}
+.inv-row.paid{border-left-color:#3fb37f}
+.inv-row.due{border-left-color:var(--danger)}
+.inv-row.paid .amount{color:#3fb37f}
+.inv-row.due .amount{color:var(--danger)}
+.inv-row .amount{flex:none;font-weight:600;font-size:14px}
+.pop{position:relative;flex:none}
+.pop>summary{list-style:none}
+.pop>summary::-webkit-details-marker{display:none}
+.pop-panel{position:absolute;right:0;top:calc(100% + 6px);z-index:20;width:min(300px,80vw);padding:12px 14px;border:1px solid var(--line-2);border-radius:10px;background:var(--panel);box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.pop-panel ul{margin:8px 0 0;padding:0;list-style:none}
+.pop-panel li{padding:6px 0;border-top:1px solid var(--line)}
+.pop-panel li span{display:block;font-size:12px;color:var(--muted)}
+.pop-panel .muted{margin:6px 0 0}
 
 .nav-bottom{display:none}
 
@@ -186,3 +207,5 @@ details.field[open]{gap:10px}
   .sheet.invoice{min-height:268mm}
   .sheet th,.sheet td,.sheet tfoot td{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 }
+.pop-panel{white-space:normal}
+@media (max-width:700px){.row:has(.pop){flex-wrap:wrap}}
