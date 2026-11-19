@@ -20,7 +20,11 @@ function hoursText(hours) {
 function myProfile() {
   return state.profile || { id: state.session.user.id, userId: state.session.user.id };
 }
-function invoiceTotal(invoice) { return invoice.lines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0); }
+function invoiceSubtotal(invoice) { return invoice.lines.reduce((sum, line) => sum + (Number(line.amount) || 0), 0); }
+/** Older invoices were saved without VAT, so a missing rate counts as 0 to keep their totals. */
+function invoiceVat(invoice) { return Math.round(invoiceSubtotal(invoice) * (Number(invoice.vat) || 0)) / 100; }
+function invoiceTotal(invoice) { return invoiceSubtotal(invoice) + invoiceVat(invoice); }
+const DEFAULT_PAYMENT_TERMS = 'Transferencia bancaria a 30 días f.f.';
 function payrollExtraHours(payroll) { return payroll.extras.reduce((sum, extra) => sum + (Number(extra.hours) || 0), 0); }
 function payrollTotal(payroll) { return payroll.days * payroll.dayRate + payrollExtraHours(payroll) * payroll.extraRate; }
 function projectOptions(selected) {
@@ -32,7 +36,7 @@ function projectOptions(selected) {
 // ---------- pages
 
 function invoicesHTML() {
-  const rows = [...state.invoices].sort((a, b) => b.number - a.number).map((invoice) => `<div class="row">
+  const rows = [...state.invoices].sort((a, b) => b.date - a.date || String(b.number).localeCompare(String(a.number), 'es', { numeric: true })).map((invoice) => `<div class="row">
     <div class="main"><b>Nº ${esc(invoice.number)} · ${esc(invoice.client.name || 'Sin cliente')}</b>
       <span>${esc(invoice.projectName || invoice.lines[0]?.description || '')}</span></div>
     <span class="when">${longDate(invoice.date)}</span>
@@ -78,7 +82,8 @@ function rowsField(title, rowHTML, rows) {
 
 function invoiceLineHTML(line) {
   return `<div class="line">
-    <input class="input grow" name="lineDescription" placeholder="Descripción" value="${esc(line.description)}">
+    <input class="input grow" name="lineDescription" placeholder="Concepto" value="${esc(line.description)}">
+    <input class="input" name="lineDetail" placeholder="Detalle (2 x 125€)" value="${esc(line.detail || '')}">
     <input class="input amount" name="lineAmount" inputmode="decimal" placeholder="Importe" value="${line.amount ? esc(money(line.amount)) : ''}">
     <button type="button" class="icon-btn" data-action="row-remove" aria-label="Quitar línea">×</button>
   </div>`;
@@ -96,8 +101,15 @@ function extraLineHTML(extra) {
 function profileDialog(kind) {
   const p = myProfile();
   const fields = kind === 'company'
-    ? field('Nombre o razón social', 'name', p.name, 'required') + field('NIF', 'taxId', p.taxId)
-      + field('Dirección', 'address1', p.address1) + field('Código postal y ciudad', 'address2', p.address2)
+    ? `<div class="pair">${field('Nombre o razón social', 'name', p.name, 'required')}${field('NIF', 'taxId', p.taxId)}</div>`
+      + `<div class="pair">${field('Dirección', 'address1', p.address1)}${field('Código postal y ciudad', 'address2', p.address2)}</div>`
+      + `<div class="pair">${field('Email de contacto', 'email', p.email || state.session.user.email, 'type="email"')}${field('Teléfono', 'phone', p.phone, 'type="tel"')}</div>`
+      + `<label class="field">Cuentas bancarias (una por línea)<textarea class="input" name="banks" rows="2" placeholder="CaixaBank ES00 0000 0000 0000 0000 0000">${esc(p.banks || '')}</textarea></label>`
+      + `<div class="pair">${field('IVA habitual (%)', 'vat', p.vat ?? 21, 'inputmode="decimal"')}${field('Forma de pago habitual', 'paymentTerms', p.paymentTerms || DEFAULT_PAYMENT_TERMS)}</div>`
+      + field('Registro Mercantil (pie de factura)', 'registry', p.registry, 'placeholder="Registro Mercantil de Madrid, Tomo …"')
+      + `<div class="field">Logo${p.logo ? `<img class="style-preview" src="${p.logo}" alt="">` : ''}
+        <input class="input" type="file" name="logo" accept="image/png,image/jpeg,image/svg+xml">
+        ${p.logo ? '<label class="check"><input type="checkbox" name="logoRemove"> Quitar</label>' : ''}</div>`
     : `<div class="pair">${field('Nombre', 'name', p.name, 'required')}${field('Apellidos', 'surname', p.surname)}</div>`
       + `<div class="pair">${field('Cargo', 'role', p.role)}${field('DNI', 'taxId', p.taxId)}</div>`
       + `<div class="pair">${field('Email', 'email', p.email || state.session.user.email, 'type="email"')}${field('Teléfono', 'phone', p.phone, 'type="tel"')}</div>`
@@ -109,15 +121,23 @@ function profileDialog(kind) {
 function invoiceDialog(invoice) {
   const p = myProfile();
   if (!invoice && !p.name) { state.notice = 'Rellena antes «Mis datos»: son los datos del emisor de la factura.'; render(); return; }
-  const next = state.invoices.reduce((max, i) => Math.max(max, Number(i.number) || 0), 0) + 1;
-  const current = invoice || { number: next, date: toSwift(startOfDay(new Date())), projectId: '', client: {}, lines: [{ description: '', amount: 0 }] };
+  const current = invoice || { number: '', date: toSwift(startOfDay(new Date())), projectId: '', client: {},
+    lines: [{ description: '', detail: '', amount: 0 }], vat: p.vat ?? 21, paymentTerms: p.paymentTerms || DEFAULT_PAYMENT_TERMS };
   openModal(invoice ? 'Editar factura' : 'Nueva factura', 'invoice',
     projectOptions(current.projectId)
-    + `<div class="pair">${field('Nº de factura', 'number', current.number, 'inputmode="numeric" required')}${field('Fecha', 'date', toInput(fromSwift(current.date)), 'type="date" required')}</div>`
+    + `<div class="pair">${field('Nº de factura', 'number', current.number, `placeholder="${esc(nextInvoiceNumber())}" required`)}${field('Fecha', 'date', toInput(fromSwift(current.date)), 'type="date" required')}</div>`
     + `<div class="pair">${field('Cliente', 'clientName', current.client.name, 'required')}${field('NIF del cliente', 'clientTaxId', current.client.taxId)}</div>`
     + `<div class="pair">${field('Dirección', 'clientAddress1', current.client.address1)}${field('Código postal y ciudad', 'clientAddress2', current.client.address2)}</div>`
-    + rowsField('Conceptos', invoiceLineHTML, current.lines),
+    + rowsField('Conceptos', invoiceLineHTML, current.lines)
+    + `<div class="pair">${field('IVA (%)', 'vat', current.vat ?? 0, 'inputmode="decimal"')}${field('Forma de pago', 'paymentTerms', current.paymentTerms || '')}</div>`,
     { id: invoice ? invoice.id : '', remove: invoice ? 'invoice-delete' : null });
+}
+
+/** A suggestion such as "262/2026": one more than the highest number used this year. */
+function nextInvoiceNumber() {
+  const year = new Date().getFullYear();
+  const used = state.invoices.map((i) => String(i.number)).filter((n) => n.endsWith(`/${year}`)).map((n) => parseInt(n, 10) || 0);
+  return `${Math.max(0, ...used) + 1}/${year}`;
 }
 
 const DEFAULT_PAYROLL_TEMPLATES = [
@@ -357,16 +377,24 @@ function fillProjectDays(form, project, days) {
 
 // ---------- forms
 
-function profileForm(values) {
-  const clean = Object.fromEntries(Object.entries(values).map(([key, value]) => [key, String(value).trim()]));
-  return change(() => saveRecord('profiles', { ...myProfile(), ...clean }));
+async function profileForm(values, id, form) {
+  const { logo, logoRemove, ...rest } = values;
+  const next = { ...myProfile(), ...Object.fromEntries(Object.entries(rest).map(([key, value]) => [key, String(value).trim()])) };
+  if ('vat' in rest) next.vat = parseAmount(rest.vat);
+  try {
+    if (logoRemove) next.logo = '';
+    else if (logo && logo.size) next.logo = await imageToDataURL(logo);
+  } catch (error) {
+    return showFormError(form, error.message);
+  }
+  return change(() => saveRecord('profiles', next));
 }
 
 function invoiceForm(values, id, form) {
   const data = new FormData(form);
-  const amounts = data.getAll('lineAmount');
+  const amounts = data.getAll('lineAmount'); const details = data.getAll('lineDetail');
   const lines = data.getAll('lineDescription')
-    .map((description, index) => ({ description: String(description).trim(), amount: parseAmount(amounts[index]) }))
+    .map((description, index) => ({ description: String(description).trim(), detail: String(details[index] || '').trim(), amount: parseAmount(amounts[index]) }))
     .filter((line) => line.description || line.amount);
   if (!lines.length) return showFormError(form, 'Añade al menos un concepto con su importe.');
   const existing = state.invoices.find((i) => i.id === id);
@@ -374,9 +402,11 @@ function invoiceForm(values, id, form) {
   const project = state.projects.find((x) => x.id === values.projectId);
   return change(() => saveRecord('invoices', {
     id: id || newID(), userId: existing ? existing.userId : state.session.user.id,
-    number: Number(values.number) || values.number.trim(), date: toSwift(fromInput(values.date)),
-    projectId: values.projectId, projectName: project ? project.projectName : '',
-    issuer: existing ? existing.issuer : { name: p.name, taxId: p.taxId, address1: p.address1, address2: p.address2 },
+    number: values.number.trim(), date: toSwift(fromInput(values.date)),
+    projectId: values.projectId, projectName: project ? project.projectName : (existing ? existing.projectName : ''),
+    issuer: existing ? existing.issuer : { name: p.name, taxId: p.taxId, address1: p.address1, address2: p.address2,
+      email: p.email || '', phone: p.phone || '', banks: p.banks || '', registry: p.registry || '', logo: p.logo || '' },
+    vat: parseAmount(values.vat), paymentTerms: values.paymentTerms.trim(),
     client: { name: values.clientName.trim(), taxId: values.clientTaxId.trim(), address1: values.clientAddress1.trim(), address2: values.clientAddress2.trim() },
     lines,
   }));
@@ -422,19 +452,35 @@ function sheetHTML() {
 }
 
 function invoiceSheet(invoice) {
-  const lines = (party) => [party.taxId, party.address1, party.address2].filter(Boolean).map((line) => `<div>${esc(line)}</div>`).join('');
-  return `<header class="inv-head"><strong>${esc(invoice.issuer.name)}</strong><strong>INVOICE</strong></header>
-    <div class="inv-party">${lines(invoice.issuer)}</div>
+  const issuer = invoice.issuer; const client = invoice.client;
+  const block = (party) => [party.name, party.address1, party.address2, party.taxId].filter(Boolean).map((line) => `<div>${esc(line)}</div>`).join('');
+  const euros = (value) => `€${money(value)}`;
+  const banks = String(issuer.banks || '').split('\n').map((b) => b.trim()).filter(Boolean);
+  return `<header class="inv-top">
+      <h1>FACTURA</h1>
+      <div class="inv-issuer">${block(issuer)}</div>
+      ${issuer.logo ? `<img class="inv-logo" src="${issuer.logo}" alt="">` : '<span class="inv-logo"></span>'}
+    </header>
     <div class="inv-meta">
-      <div class="inv-party"><b>Bill To</b><div>${esc(invoice.client.name)}</div>${lines(invoice.client)}</div>
-      <table class="inv-info"><tr><th>Invoice #</th><td>${esc(invoice.number)}</td></tr>
-        <tr><th>Invoice Date</th><td>${longDate(invoice.date).replace(/\//g, '.')}</td></tr></table>
+      <div class="inv-client">${block(client)}</div>
+      <table class="inv-info"><tr><th>Nº Factura</th><td>${esc(invoice.number)}</td></tr>
+        <tr><th>Fecha</th><td>${longDate(invoice.date).replace(/\//g, '.')}</td></tr></table>
     </div>
-    <table class="inv-lines">
-      <thead><tr><th>DESCRIPTION</th><th>AMOUNT</th></tr></thead>
-      <tbody>${invoice.lines.map((line) => `<tr><td>${esc(line.description)}</td><td>${money(line.amount)}</td></tr>`).join('')}</tbody>
-      <tfoot><tr><th>TOTAL</th><td>${money(invoiceTotal(invoice))} €</td></tr></tfoot>
-    </table>`;
+    <div class="inv-head"><span>CONCEPTO</span><span>IMPORTE</span></div>
+    <div class="inv-body">
+      ${invoice.projectName ? `<p class="inv-ref">Referencia: "${esc(invoice.projectName)}"</p>` : ''}
+      ${invoice.lines.map((line) => `<div class="inv-line"><b>${esc(line.description)}</b><span>${esc(line.detail || '')}</span><span>${euros(line.amount)}</span></div>`).join('')}
+    </div>
+    <table class="inv-totals">
+      <tr><td></td><th>SubTotal</th><td>${euros(invoiceSubtotal(invoice))}</td></tr>
+      <tr><td></td><th>IVA (${money(invoice.vat || 0, { decimals: false })}%)</th><td>${euros(invoiceVat(invoice))}</td></tr>
+      <tr class="inv-total"><td>${invoice.paymentTerms ? `<b>Forma de Pago:</b> ${esc(invoice.paymentTerms)}` : ''}</td><th>TOTAL</th><td>${euros(invoiceTotal(invoice))}</td></tr>
+    </table>
+    <footer class="inv-foot">
+      <div class="inv-contact"><b>Contacto:</b>${issuer.email ? `<div>${esc(issuer.email)}</div>` : ''}${issuer.phone ? `<div>Tlf: ${esc(issuer.phone)}</div>` : ''}</div>
+      <div class="inv-banks">${banks.length ? `<b>Datos Bancarios:</b>${banks.map((b) => `<div>${esc(b)}</div>`).join('')}` : ''}</div>
+      ${issuer.registry ? `<p class="inv-registry">${esc(issuer.registry)}</p>` : ''}
+    </footer>`;
 }
 
 function payrollSheet(payroll) {
